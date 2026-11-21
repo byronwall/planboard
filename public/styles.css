@@ -3960,8 +3960,8 @@ td.session-n { color: var(--body-ink); }
 .session-calls .code-icon { width: 12px; height: 12px; color: var(--danger); }
 .session-table .code-row, .session-calls .code-row { cursor: pointer; }
 .session-table .code-row:focus-visible, .session-calls .code-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
-.session-open { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: 2px; vertical-align: -6px; border: 0; border-radius: 6px; background: none; color: var(--quiet-text); padding: 0; transition: background-color 140ms, color 140ms; }
-.session-open svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.session-open { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: 2px; vertical-align: -6px; border: 0; border-radius: 6px; background: none; color: var(--muted); padding: 0; transition: background-color 140ms, color 140ms; }
+.session-open svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
 @media (hover: hover) { .session-open:hover { background: var(--quiet-field); color: var(--action-ink); } }
 .session-open:active { transform: scale(.97); }
 .session-open:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
