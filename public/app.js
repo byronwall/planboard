@@ -10,7 +10,7 @@ import { assetHref, delimitedTable, diagramHref, documentHref, refreshAssetImage
 import { TABS as CODE_TABS, connectPlanning, setPeople, ago, copyPrompt, cachedPrIndex, commitLinkMatch, diffSize, hideTip, icon, showTip, modKey, installCommitCards, loadPrIndex, openCommit, openPrOverlay, openWorktreeOverlay, openServers, isSummonKey, prefetchPr, renderCodePage } from "./code.js";
 import { TABS as ISSUE_TABS, cachedIssues, isMyIssue, loadIssues, openIssue, renderIssuesPage } from "./issues.js";
 import { renderChatThreads } from "./chat-threads.js";
-import { openSession } from "./session.js";
+import { openSession, setSessionNotice } from "./session.js";
 import { renderActivityPage } from "./activity.js";
 import { openSlackThread, refreshSlackStars, setSlackFavorites, setSlackNotice, slackThreadTitle } from "./slack.js";
 import { channelLabel, fresh as freshThread, lastActive, opener, permalink, refreshSlackPage, renderSlackPage } from "./slack-page.js";
@@ -120,6 +120,7 @@ function showNotice(message, error = false, { description = "", action = null, k
 }
 setPlanNotice(showNotice);
 setSlackNotice(showNotice);
+setSessionNotice(showNotice);
 setSlackFavorites({ toggle: (href) => toggleFavorite(href), has: (href) => isFavorite(href) });
 function startToast(entry) {
   entry.started = Date.now();

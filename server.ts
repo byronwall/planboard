@@ -15,6 +15,7 @@ import { createLinkMetadataStore, slackChannelNames } from "./link-metadata.ts";
 import { createCodeDashboard, githubImage } from "./code-dashboard.ts";
 import { createChatThreads } from "./chat-threads.ts";
 import { createSessionReader } from "./agent-session.ts";
+import { createSessionNotes } from "./session-notes.ts";
 import { createPeople } from "./people.ts";
 import { createIssueTracker } from "./issues.ts";
 import { createPlans } from "./plans.ts";
@@ -992,8 +993,9 @@ async function readSteps() {
 
 const chatThreads = createChatThreads();
 const readSession = createSessionReader();
+const sessionNotes = createSessionNotes(ROOT);
 
-const READ_ONLY_POSTS = new Set(["/api/link-metadata", "/api/diagram/copy", "/api/diagram/open", "/api/open-slack", "/api/issues/fetch"]);
+const READ_ONLY_POSTS = new Set(["/api/link-metadata", "/api/diagram/copy", "/api/diagram/open", "/api/open-slack", "/api/issues/fetch", "/api/session-notes/prompt"]);
 
 export async function handleRequest(request: IncomingMessage, response: ServerResponse) {
   // A write may change what the cached indexes hold; drop them before and after it, ahead of the file events. A few
@@ -1012,6 +1014,23 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       if (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(request.headers.host || "")) return json(response, 403, { error: "Chat sessions require localhost." });
       const session = await readSession(url.searchParams.get("key") || "");
       return session ? json(response, 200, session) : json(response, 404, { error: "No log for this session on this computer." });
+    }
+    // The user's notes on a session's tool calls (session-notes.ts), and the Review with an agent prompt over them.
+    if (request.method === "GET" && url.pathname === "/api/session-notes") return json(response, 200, await sessionNotes.list(url.searchParams.get("key") || ""));
+    if (request.method === "POST" && url.pathname === "/api/session-notes") return json(response, 200, await sessionNotes.change(await readJson(request)));
+    if (request.method === "POST" && url.pathname === "/api/session-notes/prompt") {
+      if (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(request.headers.host || "")) return json(response, 403, { error: "Chat sessions require localhost." });
+      const body = await readJson(request);
+      const key = String(body.key || "");
+      const session = await readSession(key);
+      if (!session) return json(response, 404, { error: "No log for this session on this computer." });
+      const { path, notes } = await sessionNotes.list(key);
+      const subagents = session.agents.length - 1;
+      const listed = notes.map((note) => `- ${note.call ? `\`${note.name}\` at ${note.time} (call ${note.call})${note.quote ? `: \`${note.quote.split("\n")[0].slice(0, 160)}\`` : ""}` : "Whole session"}\n  ${note.body.replace(/\n/g, "\n  ")}`).join("\n");
+      return json(response, 200, { prompt: fill("session-review", { title: session.title, log: session.path,
+        agents: subagents ? `, with ${subagents} subagent log${subagents === 1 ? "" : "s"} beside it` : "",
+        findings: String(body.findings || "").trim() || "The overlay found no problems.",
+        notes: notes.length ? `My notes, also in \`${path}\`:\n\n${listed}` : "I left no notes on this session." }) });
     }
     if (request.method === "GET" && url.pathname === "/api/documents") return json(response, 200, { documents: await listDocuments(), defaultPath: todayPath() });
     if (request.method === "GET" && url.pathname === "/api/document") return json(response, 200, await loadDocument(url.searchParams.get("path") || ""));

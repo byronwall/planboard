@@ -20,17 +20,19 @@ const stamp = (ms) => new Date(ms).toISOString();
 
 // ---------- Claude Code: TASK-0101, workspace invites, with two subagents and one compaction ----------
 
-function claudeLog(cwd, sessionId, steps, { sidechain = false, effort = "medium" } = {}) {
+function claudeLog(cwd, sessionId, steps, { sidechain = false, effort = "medium", prefix = sessionId.slice(0, 4) } = {}) {
   const records = [];
   let t = steps.start;
   let context = steps.context;
   let request = 0;
   let level = effort;
   let call = 0;
+  let cold = false;
   const base = { cwd, sessionId, version: "2.1.300", gitBranch: "invites/accept-flow", userType: "external", entrypoint: "claude-desktop", isSidechain: sidechain };
   for (const step of steps.list) {
     if (step.user) {
-      t += between(20, 90) * 1000;
+      t += step.gap ?? between(20, 90) * 1000;
+      cold = Boolean(step.gap);
       records.push({ ...base, type: "user", timestamp: stamp(t), message: { role: "user", content: step.user } });
       if (step.effort) level = step.effort;
       continue;
@@ -48,22 +50,25 @@ function claudeLog(cwd, sessionId, steps, { sidechain = false, effort = "medium"
     const write = Math.round(grown);
     const output = between(120, 900) + (step.text ? 400 : 0);
     const thinking = Math.round(output * (0.2 + random() * 0.3));
-    const id = `req_${sessionId.slice(0, 4)}${String(++request).padStart(4, "0")}`;
-    const usage = { input_tokens: between(1, 6), cache_read_input_tokens: context, cache_creation_input_tokens: write, output_tokens: output,
+    const id = `req_${prefix}${String(++request).padStart(4, "0")}`;
+    // After a long idle gap the prompt cache has expired, so the whole context is written again.
+    const usage = { input_tokens: between(1, 6), cache_read_input_tokens: cold ? 0 : context, cache_creation_input_tokens: cold ? write + context : write, output_tokens: output,
       output_tokens_details: { thinking_tokens: thinking }, cache_creation: { ephemeral_1h_input_tokens: write, ephemeral_5m_input_tokens: 0 } };
     const content = [];
     if (step.text) content.push({ type: "text", text: step.text });
-    const uses = (step.tools || []).map((tool) => ({ ...tool, id: `toolu_${sessionId.slice(0, 4)}${String(++call).padStart(5, "0")}` }));
+    const uses = (step.tools || []).map((tool) => ({ ...tool, id: `toolu_${prefix}${String(++call).padStart(5, "0")}` }));
     for (const tool of uses) content.push({ type: "tool_use", id: tool.id, name: tool.name, input: tool.input });
     records.push({ ...base, type: "assistant", timestamp: stamp(t), requestId: id, effort: level, perTurnEffort: level, thinkingDurationMs: between(400, 4000),
       message: { model: step.model || "claude-opus-5-5", id: `msg_${id}`, role: "assistant", content, stop_reason: uses.length ? "tool_use" : "end_turn", usage } });
     context += write;
+    cold = false;
     for (const tool of uses) {
+      const called = t;
       t += tool.ms ?? between(300, 4000);
       const text = tool.result || `${"ok\n".repeat(Math.round((tool.size || 1200) / 30))}`;
       records.push({ ...base, type: "user", timestamp: stamp(t), message: { role: "user",
         content: [{ type: "tool_result", tool_use_id: tool.id, content: text, ...(tool.error ? { is_error: true } : {}) }] } });
-      tool.onResult?.(tool.id);
+      tool.onResult?.(tool.id, called);
     }
   }
   return { records, end: t };
@@ -80,14 +85,21 @@ function source(path, count) {
 }
 const grep = (pattern, size = 900) => ({ name: "Grep", input: { pattern, path: "/Users/dev/acme/orbit-invites/src" }, size, ms: between(60, 300),
   result: `src/invites/accept.ts:14: ${pattern}\nsrc/invites/send.ts:40: ${pattern}\nsrc/api/routes.ts:88: ${pattern}` });
-const edit = (path) => ({ name: "Edit", input: { file_path: `/Users/dev/acme/orbit-invites/${path}`, old_string: "const expires = 0;", new_string: "const expires = Date.now() + WEEK;" },
+const EDITS = [["const expires = 0;", "const expires = Date.now() + WEEK;"], ["role: workspace.defaultRole,", "role: invite.role,"],
+  ["await db.run(\"UPDATE invites SET accepted_at = now() WHERE id = $1\", [invite.id]);", "const won = await db.run(\"UPDATE invites SET accepted_at = now() WHERE id = $1 AND accepted_at IS NULL\", [invite.id]);\nif (!won.count) throw new InviteUsedError();"],
+  ["<p>{error}</p>", "<p>{error ?? \"This invite has expired.\"}</p>"]];
+let edits = 0;
+const edit = (path, [old_string, new_string] = EDITS[edits++ % EDITS.length]) => ({ name: "Edit", input: { file_path: `/Users/dev/acme/orbit-invites/${path}`, old_string, new_string },
   size: 120, ms: between(30, 120), result: `The file /Users/dev/acme/orbit-invites/${path} has been updated successfully.` });
+const failedEdit = (path) => ({ ...edit(path, EDITS[1]), error: true, result: "<tool_use_error>String to replace not found in file.\nString: role: workspace.defaultRole,</tool_use_error>" });
 const write = (path, size = 3000) => ({ name: "Write", input: { file_path: `/Users/dev/acme/orbit-invites/${path}`, content: "export function acceptInvite(token: string) {\n  …\n}\n" },
   size: 140, ms: between(30, 120), result: `File created successfully at: /Users/dev/acme/orbit-invites/${path}` });
+// A verbose test run: one line per test, the kind of output that fills a context.
+const verbose = (count) => `${Array.from({ length: count }, (_, index) => `  ✓ src/${["invites", "workspaces", "auth", "billing"][index % 4]}/case-${index + 1}.test.ts > handles case ${index + 1} of the ${["accept", "member", "session", "invoice"][index % 4]} flow (${between(2, 90)} ms)`).join("\n")}\n\nTests: ${count} passed, ${count} total\nTime: 61.2 s`;
 const bash = (command, result, { error = false, ms = between(800, 9000), description = "" } = {}) => ({ name: "Bash", input: { command, description }, size: result.length, ms, error, result });
 
 function subagent(folder, agentId, toolUseId, meta, at, list) {
-  const log = claudeLog("/Users/dev/acme/orbit-invites", CLAUDE_SESSION, { start: at, context: 14_200, list }, { sidechain: true });
+  const log = claudeLog("/Users/dev/acme/orbit-invites", CLAUDE_SESSION, { start: at, context: 14_200, list }, { sidechain: true, prefix: agentId.slice(0, 4) });
   return { path: join(folder, `agent-${agentId}.jsonl`), meta: join(folder, `agent-${agentId}.meta.json`), records: log.records, end: log.end,
     metaJson: { agentType: meta.type, description: meta.description, toolUseId, model: meta.model || "inherit", finished: true } };
 }
@@ -106,7 +118,9 @@ async function claude() {
     { text: "The token has no expiry today. I'll add one and a migration.", tools: [edit("src/invites/model.ts"), write("migrations/0042_invite_expiry.sql")] },
     { tools: [write("src/invites/accept.ts", 4200)] },
     { tools: [bash("pnpm test src/invites", "FAIL src/invites/accept.test.ts\n  ● accept › joins the workspace with the invited role\n    Expected: \"editor\"\n    Received: \"viewer\"\n\nTests: 1 failed, 6 passed, 7 total", { error: true, ms: 14_200, description: "Run the invite tests" })] },
-    { text: "The role comes from the workspace default, not the invite. Fixing that.", tools: [read("src/workspaces/members.ts", 3600), edit("src/invites/accept.ts")] },
+    { text: "The role comes from the workspace default, not the invite. Fixing that.", tools: [read("src/workspaces/members.ts", 3600), failedEdit("src/invites/accept.ts")] },
+    { tools: [failedEdit("src/invites/accept.ts")] },
+    { text: "The file changed since I read it. Reading it again before the edit.", tools: [read("src/invites/accept.ts", 4200), edit("src/invites/accept.ts", EDITS[1])] },
     { tools: [bash("pnpm test src/invites", "PASS src/invites/accept.test.ts\nPASS src/invites/send.test.ts\n\nTests: 7 passed, 7 total", { ms: 12_800, description: "Run the invite tests" })] },
     { text: "Two parts are separable: the expired-invite page and the email copy. I'll give each to a subagent.",
       tools: [
@@ -116,26 +130,30 @@ async function claude() {
     { tools: [read("src/pages/invite-expired.tsx", 2200), bash("pnpm typecheck", "src/pages/invite-expired.tsx(18,7): error TS2322: Type 'string | undefined' is not assignable to type 'string'.", { error: true, ms: 9_400, description: "Type-check" })] },
     { tools: [edit("src/pages/invite-expired.tsx"), bash("pnpm typecheck", "", { ms: 8_900, description: "Type-check" })] },
     { tools: [read("emails/invite.mjml", 1800), edit("emails/invite.mjml")] },
-    { user: "Looks good. Can you also make sure an invite can only be used once, and think hard about the race where two tabs accept at the same time?", effort: "high" },
+    { user: "Looks good. Can you also make sure an invite can only be used once, and think hard about the race where two tabs accept at the same time?", effort: "high", gap: 9 * 60_000 },
     { text: "I'll use a conditional update so only one accept wins.", tools: [read("src/db/index.ts", 2600), grep("UPDATE invites", 600)] },
     { tools: [edit("src/invites/accept.ts"), write("src/invites/accept-race.test.ts", 2400)] },
     { tools: [bash("pnpm test src/invites", "PASS src/invites/accept.test.ts\nPASS src/invites/accept-race.test.ts\nPASS src/invites/send.test.ts\n\nTests: 9 passed, 9 total", { ms: 15_600, description: "Run the invite tests" })] },
     { compact: 24_800 },
-    { text: "Context was compacted. Running the full suite before the PR.", tools: [bash("pnpm test", "Tests: 412 passed, 412 total\nTime: 61.2 s", { ms: 63_000, description: "Run every test" })] },
+    { text: "Context was compacted. Running the full suite before the PR.", tools: [bash("pnpm test --reporter=verbose", verbose(412), { ms: 63_000, description: "Run every test" })] },
     { tools: [bash("git status --short", " M src/invites/model.ts\n M src/invites/accept.ts\n?? src/invites/accept-race.test.ts\n?? migrations/0042_invite_expiry.sql", { ms: 300 })] },
     { tools: [bash("git commit -am \"Add the invite accept flow\"", "[invites/accept-flow 4c1d2e9] Add the invite accept flow\n 9 files changed, 412 insertions(+), 18 deletions(-)", { ms: 1_400 })] },
     { tools: [bash("gh pr create --fill", "https://github.com/acme/orbit/pull/231", { ms: 4_200 })] },
+    { text: "Waiting for CI.", tools: [bash("sleep 30 && gh pr checks 231", "build\tpending\ntest\tpending", { ms: 31_000, description: "Check CI" })] },
+    { tools: [bash("sleep 30 && gh pr checks 231", "build\tpass\ntest\tpending", { ms: 31_000, description: "Check CI" })] },
+    { tools: [bash("sleep 30 && gh pr checks 231", "build\tpass\ntest\tpending", { ms: 31_000, description: "Check CI" })] },
+    { tools: [bash("sleep 30 && gh pr checks 231", "build\tpass\ntest\tpass", { ms: 31_000, description: "Check CI" })] },
     { text: "Opened acme/orbit#231. The accept flow joins with the invited role, expires after 7 days, shows the expired page with a resend button, and a second accept of the same invite fails cleanly." },
   ];
   // Each Agent call writes its subagent's own transcript.
   const main = claudeLog("/Users/dev/acme/orbit-invites", CLAUDE_SESSION, { start, context: 18_400, list: steps.map((step) => ({
-    ...step, tools: step.tools?.map((tool) => tool.spawn ? { ...tool, onResult: (id) => children.push({ id, ...tool.spawn }) } : tool),
+    ...step, tools: step.tools?.map((tool) => tool.spawn ? { ...tool, onResult: (id, at) => children.push({ id, at, ...tool.spawn }) } : tool),
   })) });
   const files = [];
   for (const [index, child] of children.entries()) {
-    const at = start + 22 * 60_000 + index * 40_000;
+    const at = child.at + 2_000;
     const list = index === 0
-      ? [{ tools: [read("src/pages/invite-sent.tsx", 1800), grep("ExpiredPage", 300)] }, { tools: [write("src/pages/invite-expired.tsx", 2200)] },
+      ? [{ tools: [read("src/pages/invite-sent.tsx", 1800), read("src/invites/model.ts", 3400), grep("ExpiredPage", 300)] }, { tools: [write("src/pages/invite-expired.tsx", 2200)] },
         { tools: [write("src/pages/invite-expired.test.tsx", 1600), bash("pnpm test src/pages", "Tests: 3 passed, 3 total", { ms: 7_800 })] }, { text: "Added /invite/expired with a resend button and a test." }]
       : [{ model: "claude-haiku-5-5", tools: [grep("invite", 2400)] }, { model: "claude-haiku-5-5", tools: [read("emails/invite.mjml", 1800), read("emails/invite-reminder.mjml", 1700)] },
         { model: "claude-haiku-5-5", text: "Templates live in emails/invite.mjml and emails/invite-reminder.mjml." }];
@@ -189,7 +207,7 @@ async function codex() {
   const patch = (path) => ({ name: "apply_patch", args: { input: `*** Begin Patch\n*** Update File: ${cwd}/${path}\n@@\n-import { Chart } from "chart-lib";\n+const Chart = lazy(() => import("chart-lib"));\n*** End Patch` }, output: "Success. Updated the following files:\nM " + path, ms: 200 });
 
   user("Cut the dashboard's cold start under two seconds (TASK-0103). Measure first, then fix the biggest cause, and show before and after numbers.");
-  request([shell("pnpm build && pnpm measure:cold-start", "cold start: 4.82 s (p50 of 5)\nmain.js: 1.94 MB", 48_000)], "Measuring the current cold start first.");
+  request([shell("pnpm build && pnpm measure:cold-start", "cold start: 4.82 s (p50 of 5)\nmain.js: 1.94 MB", 78_000)], "Measuring the current cold start first.");
   request([shell("pnpm analyze-bundle --json | head -40", "chart-lib 812 KB\nmoment 290 KB\nicons 214 KB\n…", 21_000)]);
   request([shell("rg -n \"from \\\"chart-lib\\\"\" src", "src/dashboard/Revenue.tsx:3\nsrc/dashboard/Usage.tsx:2\nsrc/dashboard/Funnel.tsx:4", 400)]);
   request([patch("src/dashboard/Revenue.tsx"), patch("src/dashboard/Usage.tsx"), patch("src/dashboard/Funnel.tsx")], "chart-lib is 42% of the bundle and only the charts use it. Loading it lazily.");

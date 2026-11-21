@@ -14,8 +14,8 @@ import { codexQuery } from "./chat-threads.ts";
 
 type JSONObject = Record<string, any>;
 export type Request = { agent: number; t: number; model: string; effort?: string; input: number; cached: number; cacheWrite: number;
-  output: number; reasoning: number; cost: number | null; stop?: string; thinkingMs?: number; window?: number };
-export type Tool = { agent: number; t: number; request: number; name: string; args: string; result: string; size: number;
+  output: number; reasoning: number; cost: number | null; stop?: string; thinkingMs?: number; window?: number; text?: string };
+export type Tool = { id: string; agent: number; t: number; request: number; name: string; args: string; result: string; size: number;
   error: boolean; dur: number | null; via?: string; spawns?: number };
 export type Message = { agent: number; t: number; text: string };
 export type Mark = { agent: number; t: number; kind: "compact" | "model" | "effort"; label: string; before?: number; after?: number; trigger?: string };
@@ -27,10 +27,19 @@ export type Session = { key: string; provider: "Claude" | "Codex"; title: string
 const ARGS = 1500;
 const RESULT = 1500;
 const MESSAGE = 4000;
+const SAID = 2000;
 const string = (value: unknown) => typeof value === "string" ? value : "";
 const int = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(0, Math.round(Number(value))) : 0;
 const clip = (text: string, size: number) => text.length > size ? `${text.slice(0, size - 1)}…` : text;
 const json = (value: unknown) => typeof value === "string" ? value : value === undefined || value === null ? "" : JSON.stringify(value);
+// Clips each long string inside a call's arguments, so the arguments stay valid JSON the overlay can lay out.
+const clipArgs = (value: unknown): string => {
+  if (typeof value === "string") { try { const parsed = JSON.parse(value); if (parsed && typeof parsed === "object") return clipArgs(parsed); } catch { /* plain text */ } return clip(value, ARGS); }
+  const walk = (item: unknown): unknown => typeof item === "string" ? clip(item, ARGS) : Array.isArray(item) ? item.map(walk)
+    : item && typeof item === "object" ? Object.fromEntries(Object.entries(item).map(([key, inner]) => [key, walk(inner)])) : item;
+  return json(walk(value));
+};
+const said = (row: Request, text: string) => { if (text.trim()) row.text = clip([row.text, text.trim()].filter(Boolean).join("\n\n"), SAID); };
 const time = (value: unknown) => { const at = Date.parse(string(value)); return Number.isFinite(at) ? at : 0; };
 const lines = (text: string) => {
   const out: JSONObject[] = [];
@@ -161,10 +170,10 @@ function readClaude(records: JSONObject[], agent: number, session: Session, call
         }
       }
       for (const block of Array.isArray(message.content) ? message.content : []) {
+        if (block?.type === "text" && index !== undefined) said(session.requests[index], string(block.text));
         if (block?.type !== "tool_use") continue;
-        const args = json(block.input);
-        calls.set(string(block.id), session.tools.push({ agent: lane, t, request: index ?? -1, name: string(block.name) || "tool",
-          args: clip(args, ARGS), result: "", size: 0, error: false, dur: null }) - 1);
+        calls.set(string(block.id), session.tools.push({ id: string(block.id), agent: lane, t, request: index ?? -1, name: string(block.name) || "tool",
+          args: clipArgs(block.input), result: "", size: 0, error: false, dur: null }) - 1);
       }
       continue;
     }
@@ -281,6 +290,7 @@ function readCodex(records: JSONObject[], agent: number, session: Session) {
   let first = 0;
   let last = 0;
   let title = "";
+  let narration = "";
   const compact = (t: number) => {
     const prior = session.marks.findLast((mark) => mark.agent === agent && mark.kind === "compact");
     if (!prior || Math.abs(prior.t - t) > 120_000) session.marks.push({ agent, t, kind: "compact", label: "Compacted" });
@@ -318,9 +328,9 @@ function readCodex(records: JSONObject[], agent: number, session: Session) {
           const command = Array.isArray(item.command) ? item.command.at(-1) : item.command;
           const result = item.type === "CommandExecution" ? string(item.aggregated_output) : outputText(item.result?.content ?? item.result);
           const started = int(payload.started_at_ms) || t;
-          pending.push(session.tools.push({ agent, t: started, request: -1, via: "exec",
+          pending.push(session.tools.push({ id: string(item.id) || `exec:${agent}:${started}:${session.tools.length}`, agent, t: started, request: -1, via: "exec",
             name: item.type === "CommandExecution" ? "shell" : `${string(item.server)}.${string(item.tool)}`,
-            args: clip(item.type === "CommandExecution" ? string(command) : json(item.arguments), ARGS), result: clip(result, RESULT), size: result.length,
+            args: item.type === "CommandExecution" ? clip(string(command), ARGS) : clipArgs(item.arguments), result: clip(result, RESULT), size: result.length,
             error: item.status === "failed" || item.result?.isError === true || (item.exit_code ?? 0) !== 0,
             dur: int(payload.completed_at_ms) ? int(payload.completed_at_ms) - started : null }) - 1);
         }
@@ -338,6 +348,7 @@ function readCodex(records: JSONObject[], agent: number, session: Session) {
         const index = session.requests.push({ agent, t, model: model || "?", effort: effort || undefined, input, cached, cacheWrite: int(usage.cache_write_input_tokens),
           output, reasoning: int(usage.reasoning_output_tokens), cost: codexCost(model, input, cached, output), window: window || undefined }) - 1;
         for (const tool of pending.splice(0)) session.tools[tool].request = index;
+        if (narration) { said(session.requests[index], narration); narration = ""; }
       } else if (type?.endsWith?.("_end") && calls.has(string(payload.call_id))) {
         const tool = session.tools[calls.get(string(payload.call_id))!];
         const duration = payload.duration;
@@ -347,13 +358,14 @@ function readCodex(records: JSONObject[], agent: number, session: Session) {
       continue;
     }
     if (record.type !== "response_item") continue;
-    if (CODEX_CALLS.has(payload.type)) {
+    if (payload.type === "message" && payload.role === "assistant") {
+      narration = [narration, outputText(payload.content)].filter(Boolean).join("\n\n");
+    } else if (CODEX_CALLS.has(payload.type)) {
       const id = string(payload.call_id) || `${payload.type}:${t}:${calls.size}`;
       const name = payload.type === "function_call" || payload.type === "custom_tool_call"
         ? [string(payload.namespace).replace(/^mcp__/, "").replace(/__$/, ""), string(payload.name)].filter(Boolean).join(".")
         : payload.type.replace(/_call$/, "");
-      const args = json(payload.arguments ?? payload.input ?? payload.action ?? "");
-      const index = session.tools.push({ agent, t, request: -1, name: name || "tool", args: clip(args, ARGS), result: "", size: 0,
+      const index = session.tools.push({ id, agent, t, request: -1, name: name || "tool", args: clipArgs(payload.arguments ?? payload.input ?? payload.action ?? ""), result: "", size: 0,
         error: payload.status === "failed", dur: null }) - 1;
       calls.set(id, index);
       pending.push(index);
@@ -369,6 +381,9 @@ function readCodex(records: JSONObject[], agent: number, session: Session) {
       if (payload.status === "failed" || exitCode(text) !== 0 || /^(?:Script (?:failed|error)|Error:|error:)/.test(text)) tool.error = true;
     }
   }
+  // A closing answer can follow the thread's last token count.
+  const lastOwn = session.requests.findLast((request) => request.agent === agent);
+  if (narration && lastOwn) said(lastOwn, narration);
   // Older rollouts log typed input as user_message events; newer ones only as completed UserMessage items.
   session.messages.push(...(typed.length ? typed : items));
   return { first, last, model, title };
