@@ -71,7 +71,7 @@ const shots = {
   },
   // The session overlay reads the fictional logs in examples/agent-logs (the server's CLAUDE_CONFIG_DIR and CODEX_HOME).
   session: async () => {
-    await page.goto(`${base}/?view=chat-threads&session=claude:5e55a0c1-0103-4a11-9c3e-ac0e00000101&session-agent=all&session-pick=r9`);
+    await page.goto(`${base}/?view=chat-threads&session=claude:5e55a0c1-0103-4a11-9c3e-ac0e00000101&session-agent=all`);
     await page.waitForSelector('[data-session-state="ready"]'); await settle();
   },
   // The diff overlay for the newest commit that touches several files.

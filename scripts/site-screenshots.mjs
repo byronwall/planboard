@@ -198,7 +198,7 @@ const shots = {
     await go("/?view=chat-threads", '[data-chat-threads-state="ready"]');
     await page.unroute("**/api/chat-threads");
   },
-  session: async () => { await go("/?view=chat-threads&session=codex:019a0101-c01d-7a57-a7e5-ac0e00000103&session-tab=tools&session-pick=t:exec_command", '[data-session-state="ready"]'); },
+  session: async () => { await go("/?view=chat-threads&session=claude:5e55a0c1-0103-4a11-9c3e-ac0e00000101&session-agent=all", '[data-session-state="ready"]'); },
   setup: async () => { await go("/?view=setup"); await settle(4000); },
   palette: async () => { await go("/"); await page.keyboard.press("Meta+k"); await settle(300); await page.keyboard.type("invite"); await settle(); },
   shortcuts: async () => { await go("/"); await page.keyboard.press("Shift+/"); await settle(); },

@@ -448,14 +448,14 @@ status: active
 
 <section class="page" id="session">
   <h2>Session analysis <span class="route">?session=claude:&lt;id&gt;</span></h2>
-  <p class="intro">One Codex or Claude Code session read in full from its local log: where the tokens went, which tools ran, how long they took and which failed. Open it from a thread's token count on Chat Threads or the chart button beside a chat link in a task.</p>
-  <figure><a href="images/session.webp"><img src="images/session.webp" loading="lazy" width="2160" height="1350" alt="Session analysis of a Codex session on its Tools tab"></a><figcaption>A fictional Codex session; the overlay reads only your own machine's logs.</figcaption></figure>
+  <p class="intro">One Codex or Claude Code session read in full from its local log: what the agents did, where the tokens and time went, and what went wrong. Open it from a thread's token count on Chat Threads or the chart button beside a chat link in a task.</p>
+  <figure><a href="images/session.webp"><img src="images/session.webp" loading="lazy" width="2160" height="1350" alt="Session analysis of a Claude Code session on its Findings tab"></a><figcaption>A fictional Claude Code session; the overlay reads only your own machine's logs.</figcaption></figure>
   <dl class="parts">
-    <dt>Totals</dt><dd>Requests, input with the share read from cache, cache writes, uncached input, output, the largest prompt, cost (Claude Code's own total, or an estimate marked <strong>est.</strong>), tool calls and failures, messages, compactions, subagents and duration.</dd>
-    <dt>Chart</dt><dd>A bar per request: cache read, cache write and uncached input stacked, output below the axis, and a running total. Rules and marks show compactions, your messages, and model or effort changes. Click a bar to select its request.</dd>
-    <dt>Timeline</dt><dd>Requests, your messages and the changes between them in order, each request with its model, effort, prompt size, cache share and the tools it called.</dd>
-    <dt>Tools, Files, Agents</dt><dd>Calls, failures and time per tool; reads, edits and writes per file; and the main agent beside each subagent. Pick an agent to scope the whole view to it.</dd>
-    <dt>Inspector</dt><dd>The selected request's token breakdown and every tool call it made with its arguments, duration and result, or the full text of a message.</dd>
+    <dt>Findings</dt><dd>Failed calls and blind retries, polling loops, files read again, subagents re-reading what their parent had, large results carried through later requests, cache misses after idle gaps, and slow calls. Worst first, each with a token estimate and what usually does better.</dd>
+    <dt>Chart</dt><dd>A bar per request: cache read, cache write and uncached input stacked, output below the axis, and a running total. Marks show compactions, your messages, model or effort changes and failed calls. A selected finding lights up its requests.</dd>
+    <dt>Timeline</dt><dd>Each of your messages heads a turn with its requests, calls, failures, time and cost; below it, what the agent said before each step and the tools it called.</dd>
+    <dt>Tools, Files, Agents</dt><dd>Calls, failures, time and result tokens per tool; reads, edits and writes per file; and each agent's activity on one clock with its cost and findings.</dd>
+    <dt>Notes and review</dt><dd>Note any tool call (what was it for, what would have been better); notes are saved in the workspace. <strong>Review with an agent</strong> turns the findings and notes into a prompt that asks for lasting fixes.</dd>
   </dl>
 </section>
 
