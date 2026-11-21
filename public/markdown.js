@@ -94,11 +94,29 @@ export function chatLink(href) {
     if (url.protocol === "claude:" && !url.search && !url.hash && /^(?:claude\.ai\/epitaxy|session)\/local_[a-z0-9-]+\/?$/i.test(`${url.hostname}${url.pathname}`)) {
       return { href: url.href, provider: "Claude Code" };
     }
+    // A Claude Code session started from the command line, as Chat Threads links it: claude://resume?session=<id>.
+    if (url.protocol === "claude:" && url.hostname === "resume" && !url.pathname.replace("/", "") && /^\?session=[a-f0-9-]{36}$/i.test(url.search) && !url.hash) {
+      return { href: url.href, provider: "Claude Code" };
+    }
     if (url.protocol === "https:" && ["chatgpt.com", "chat.openai.com"].includes(url.hostname) && /^\/(?:g\/[^/]+\/)?c\/[a-z0-9-]+\/?$/i.test(url.pathname)) {
       return { href: url.href, provider: "ChatGPT" };
     }
   } catch { /* Unavailable or malformed URLs are not conversation links. */ }
   return null;
+}
+
+// "codex:<thread id>" or "claude:<desktop or CLI id>" for a Codex or Claude chat link; null for anything else.
+export function sessionKey(href) {
+  const codex = /^codex:\/\/threads\/([a-f0-9-]{36})\/?$/i.exec(href || "");
+  if (codex) return `codex:${codex[1]}`;
+  const claude = /^claude:\/\/(?:claude\.ai\/epitaxy|session)\/(local_[a-f0-9-]{36})\/?$/i.exec(href || "") || /^claude:\/\/resume\?session=([a-f0-9-]{36})$/i.exec(href || "");
+  return claude ? `claude:${claude[1]}` : null;
+}
+
+// The small button beside a Codex or Claude chat link that opens its session analysis in Planboard.
+export function sessionButton(href) {
+  const key = sessionKey(href);
+  return key ? `<button type="button" class="session-open" data-session-key="${escapeHtml(key)}" data-tip="Token use and tool calls" aria-label="Open token use and tool calls"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 16v-3M11 16V9M15 16v-5M19 16V6"/></svg></button>` : "";
 }
 
 export function extractChatLinks(markdown = "") {
@@ -117,7 +135,7 @@ export function renderChatLinks(links = []) {
   if (!valid.length) return "";
   return `<span class="chat-links" aria-label="Related chats">${valid.map(link => {
     const provider = chatLink(link.href).provider;
-    return `<a class="chat-link" href="${escapeHtml(link.href)}" ${provider === "ChatGPT" ? 'target="_blank" rel="noreferrer"' : ""} title="${escapeHtml(link.label)}">${SERVICE_ICONS[{ Codex: "codex", "Claude Code": "claude", ChatGPT: "openai" }[provider]]}${escapeHtml(provider)} · ${escapeHtml(link.label)}&nbsp;<span aria-hidden="true">↗</span></a>`;
+    return `<a class="chat-link" href="${escapeHtml(link.href)}" ${provider === "ChatGPT" ? 'target="_blank" rel="noreferrer"' : ""} title="${escapeHtml(link.label)}">${SERVICE_ICONS[{ Codex: "codex", "Claude Code": "claude", ChatGPT: "openai" }[provider]]}${escapeHtml(provider)} · ${escapeHtml(link.label)}&nbsp;<span aria-hidden="true">↗</span></a>${sessionButton(link.href)}`;
   }).join("")}</span>`;
 }
 
@@ -432,7 +450,7 @@ export function inlineMarkdown(value, currentPath = "", bare = true) {
     if (link.kind === "document") {
       output.push(documentLink(link, label));
     } else if (link.kind === "app") {
-      output.push(`<a class="markdown-external-link" href="${escapeHtml(link.href)}">${label}&#8288;<span class="external-mark" aria-hidden="true">↗</span><span class="sr-only"> (opens in ${link.href.startsWith("claude:") ? "Claude" : "Codex"})</span></a>`);
+      output.push(`<a class="markdown-external-link" href="${escapeHtml(link.href)}">${label}&#8288;<span class="external-mark" aria-hidden="true">↗</span><span class="sr-only"> (opens in ${link.href.startsWith("claude:") ? "Claude" : "Codex"})</span></a>${sessionButton(link.href)}`);
     } else if (link.kind === "external") {
       output.push(externalLink(link.href, label));
     } else if (attachment?.kind === "asset") {
