@@ -6,6 +6,7 @@ Everything the viewer does, page by page. Start with the [README](../README.md) 
 - [Code view](#code-view)
 - [Issues](#issues)
 - [Chat Threads](#chat-threads)
+- [Session analysis](#session-analysis)
 - [Setup](#setup)
 - [Tasks, next actions, and links](#tasks-next-actions-and-links)
 
@@ -43,11 +44,26 @@ Open **Chat Threads** in the sidebar or through ⌘K. It lists the local Codex a
 - **App and source.** Claude Code threads carry the Claude mark and Codex threads the Codex mark. A small badge on the mark says how a thread started: a prompt for the command line, a calendar clock for a Codex automation, a network for a thread another agent started. Hover the mark for the words.
 - **Model.** The model column names the model as people say it (Opus 5.5, Fable 5.2, GPT-6 Luna) with a dot in its family's color, and the reasoning effort as five bars at the right of the column. Hover the bars for the effort level. Hover for the raw model ID.
 - **Workspace.** The working folder with the Code view's two-letter mark, and the branch below it when Codex recorded one. A child thread in its parent's folder leaves the folder out.
-- **Tokens** shows each thread's total. Codex reports its own total. For Claude Code, the viewer adds up the usage of every reply in the session's transcript, so the total counts cached input as Codex does; hover for input, the share read from cache, and output. A dash means no usage was recorded.
+- **Tokens** shows each thread's total. Codex reports its own total. For Claude Code, the viewer adds up the usage of every reply in the session's transcript, so the total counts cached input as Codex does; hover for input, the share read from cache, and output. A dash means no usage was recorded. Click the number to open the thread's [session analysis](#session-analysis).
 
 **App** filters to Codex or Claude (counts are top-level threads). If a source cannot be read (for example the Codex history), a warning shows at the right of the toolbar. Group **By status** (the sections above) or **By workspace** (folders, most recently active first). Sort by **Recent** or **Most tokens** (a family's total). Long titles, such as a CLI session's first prompt, clamp to two lines; hover for the full text. Search matches title, subagent name and path, folder, branch, app, model name or ID, effort, and status; a match inside a family shows its parent and opens the family. From the search field, Down focuses the first conversation, Up and Down move between them, and Enter opens one in its desktop app. Esc in the search field clears it. Search, app, group and sort survive reload. An empty filtered list offers **Clear search** or **Show all apps**. If a refresh fails, the last results stay while the viewer retries. A standalone Claude CLI session becomes openable in Claude Desktop after the terminal process exits. On narrow screens, **Library** expands the navigation above the table.
 
 The list shows every live thread and the 50 most recent finished top-level threads per app, with their subagents. It refreshes every few seconds while the page is visible and checks the local process and turn state, so a desktop window left open after a turn ends does not count as running. It reads local session metadata on macOS; cloud threads and other machines' threads are outside this view.
+
+### Session analysis
+
+The session overlay reads one Codex or Claude Code session's log in full, so you can see where its tokens and time went. Open it from a thread's **Tokens** number on Chat Threads, or from the chart button beside a Codex or Claude Code chat link in a document (a task's `## Chats` list, for example). The URL keeps it open: `?session=claude:<session id>` or `?session=codex:<thread id>`, with `session-tab`, `session-agent` and `session-pick` for the tab, agent and selected row.
+
+- **Header.** The session's title, the models and effort levels it used in order (`Opus 5.5 · medium → high`), its folder, branch and start time, and **Open in Claude** or **Open in Codex**.
+- **Totals.** Requests, input, the share read from the prompt cache, cache writes, uncached input, output, the largest single prompt, cost, tool calls with failures, typed messages, compactions, subagents and duration. Input is the whole prompt each request read, so a long session's input is mostly cache reads. Cost is Claude Code's own total when the transcript has one; otherwise it is an estimate from public API prices, marked **est.**, and a dash when the model has no known price. Hover a number for the exact count.
+- **Chart.** One bar per model request, in order: the prompt stacked as cache read, cache write and uncached input, with output below the axis on its own scale. A blue line traces the running total of tokens. A dashed purple rule marks each compaction, a triangle on top marks each message you typed, and a short label marks a model or effort change. A dotted line shows Codex's context window when the prompts come near it. Hover a bar for its numbers; click it to select that request in the timeline.
+- **Timeline.** Requests in time order, with your messages and the compaction, model and effort changes between them. Each row shows the time, model and effort, the prompt size, the share read from cache, new (uncached) input, output and the tools it called, with a count for repeats and a red alert for a failed call.
+- **Tools.** One row per tool: calls, failures, total, median and longest time from call to result, and the size of the results it returned. Select a tool to list every call; click a call to see its request in the timeline.
+- **Files.** Every file a tool read, edited or wrote (Read, Edit, Write, apply_patch and the like), with counts per action and when it was last touched.
+- **Agents.** The main agent and each subagent with its model, requests, tokens, tool calls and duration. Click one to scope the whole overlay to it; the **Agent** menu in the toolbar does the same, and **All agents** mixes them in time order (subagent bars show lighter). A spawning call in the inspector has **Open subagent**.
+- **Inspector.** The selected request in full: its token breakdown, context-window share (Codex), thinking time and stop reason (Claude Code), estimated cost, and every tool call it made with its arguments, duration, result size and the start of its result. A selected message shows its full text.
+
+The filter (`/`) narrows the current tab by tool name, arguments, file path or message text. Up and Down move between rows. Claude Code sessions include each Agent-tool subagent's own transcript; Codex sessions include subagent threads from the state database. The overlay reads only this computer's logs (`~/.claude/projects` and `~/.codex/sessions`, or `CLAUDE_CONFIG_DIR` and `CODEX_HOME`); `examples/agent-logs/` holds fictional ones for the demo, made by `scripts/agent-logs-sample.mjs`.
 
 ### Setup
 

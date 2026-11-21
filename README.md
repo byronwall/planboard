@@ -73,9 +73,11 @@ The agent creates your workspace (`../planning` beside a clone), starts the view
 
 ![The Issues page](docs/images/issues.png)
 
-**Every agent thread in one place.** Chat Threads lists your local Codex and Claude Code threads: what waits for you, what runs, and what waits on a background command. Subagents and side sessions sit under the thread that started them, each with its model, reasoning effort and token use. Click a title to open the conversation in its desktop app.
+**Every agent thread in one place.** Chat Threads lists your local Codex and Claude Code threads: what waits for you, what runs, and what waits on a background command. Subagents and side sessions sit under the thread that started them, each with its model, reasoning effort and token use. Click a title to open the conversation in its desktop app, or its token count to study the session: every request's tokens on a chart, a timeline of requests, messages and compactions, and every tool call with its arguments, duration and result.
 
 ![Chat Threads: waiting, running and background threads, with subagents under their parents](docs/images/chats.png)
+
+![Session analysis: tokens per request, the timeline of requests and messages, and one request's tool calls](docs/images/session.png)
 
 **Everything from the keyboard.** `⌘K` searches documents, tasks, PRs, and issues. Single letters move between pages (`T` today, `A` tasks, `G` code, `I` issues), and `?` lists every shortcut.
 

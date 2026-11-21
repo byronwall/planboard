@@ -3926,7 +3926,7 @@ div.step-row { cursor: pointer; }
 .session-model { white-space: nowrap; color: var(--body-ink); }
 .session-model small { color: var(--quiet-text); }
 .session-agent-cell { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-td.session-n { position: relative; color: var(--body-ink); }
+td.session-n { color: var(--body-ink); }
 .session-n.is-warn { color: var(--status-waiting-ink); }
 .is-error, .session-n.is-error { color: var(--danger); }
 .session-tools { display: flex; flex-wrap: wrap; gap: 2px 8px; max-height: 1.45em; overflow: hidden; }

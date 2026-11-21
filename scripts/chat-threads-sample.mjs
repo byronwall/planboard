@@ -15,11 +15,11 @@ export function sampleChatThreads(now = Date.now()) {
   };
   const claude = (tokens) => ({ tokens, usage: { tokens, input: Math.round(tokens * 0.996), cached: Math.round(tokens * 0.98), output: Math.round(tokens * 0.004) } });
   const threads = [
-    thread({ id: "invites", title: "TASK-0103 · Ship workspace invites", cwd: `${root}/orbit-invites`, branch: "invites/accept-flow", model: "claude-opus-5-5", effort: "high", state: "waiting", updatedAt: ago(2), startedAt: ago(48), ...claude(8_420_000) }),
+    thread({ id: "invites", session: "claude:5e55a0c1-0103-4a11-9c3e-ac0e00000101", title: "TASK-0103 · Ship workspace invites", cwd: `${root}/orbit-invites`, branch: "invites/accept-flow", model: "claude-opus-5-5", effort: "high", state: "waiting", updatedAt: ago(2), startedAt: ago(48), ...claude(8_420_000) }),
     thread({ parent: "invites", kind: "agent", title: "Invite email templates", cwd: `${root}/orbit-invites`, model: "claude-opus-5-5", effort: "medium", state: "active", updatedAt: ago(1), startedAt: ago(30), ...claude(2_310_000) }),
     thread({ parent: "invites", kind: "agent", title: "Accept endpoint tests", cwd: `${root}/orbit-invites-tests`, branch: "invites/accept-tests", model: "claude-sonnet-5-5", effort: "medium", updatedAt: ago(9), startedAt: ago(28), ...claude(1_180_000) }),
 
-    thread({ id: "coldstart", provider: "Codex", title: "TASK-0101 · Cut dashboard cold start under two seconds", branch: "perf/cold-start", model: "gpt-6-astra", effort: "high", state: "active", updatedAt: ago(0), startedAt: ago(64), tokens: 21_600_000 }),
+    thread({ id: "coldstart", session: "codex:019a0101-c01d-7a57-a7e5-ac0e00000103", provider: "Codex", title: "TASK-0101 · Cut dashboard cold start under two seconds", branch: "perf/cold-start", model: "gpt-6-astra", effort: "high", state: "active", updatedAt: ago(0), startedAt: ago(64), tokens: 21_600_000 }),
     thread({ parent: "coldstart", provider: "Codex", kind: "subagent", nickname: "Kepler", role: "profile_bundle", title: "profile bundle", model: "gpt-6-luna", effort: "high", state: "active", updatedAt: ago(0), startedAt: ago(52), tokens: 5_240_000 }),
     thread({ parent: "coldstart", provider: "Codex", kind: "subagent", nickname: "Hypatia", role: "lazy_load_charts", title: "lazy load charts", model: "gpt-6-luna", effort: "high", updatedAt: ago(12), startedAt: ago(51), tokens: 3_960_000 }),
     thread({ parent: "coldstart", provider: "Codex", kind: "subagent", nickname: "Pascal", role: "measure_cold_start", title: "measure cold start", model: "gpt-6.1-terra", effort: "medium", state: "active", updatedAt: ago(1), startedAt: ago(50), tokens: 1_870_000 }),
