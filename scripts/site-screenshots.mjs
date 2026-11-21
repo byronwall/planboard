@@ -97,7 +97,7 @@ for (const rel of ["reference/team.md", "reference/environments.md", "reference/
   await utimes(join(workspace, rel), time, time);
 }
 
-const server = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", join(repo, "server.ts")], { env: { ...process.env, PLANNING_ROOT: workspace, PLAN_VIEWER_PORT: String(port), PLAN_VIEWER_DRY_RUN: "1" }, stdio: ["ignore", "pipe", "inherit"] });
+const server = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", join(repo, "server.ts")], { env: { ...process.env, CLAUDE_CONFIG_DIR: join(repo, "examples/agent-logs/claude"), CODEX_HOME: join(repo, "examples/agent-logs/codex"), PLANNING_ROOT: workspace, PLAN_VIEWER_PORT: String(port), PLAN_VIEWER_DRY_RUN: "1" }, stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((resolve) => server.stdout.on("data", (chunk) => /is ready/.test(chunk) && resolve()));
 
 const browser = await chromium.launch({ channel: "chrome", args: ["--use-mock-keychain", "--password-store=basic"] });
@@ -198,6 +198,7 @@ const shots = {
     await go("/?view=chat-threads", '[data-chat-threads-state="ready"]');
     await page.unroute("**/api/chat-threads");
   },
+  session: async () => { await go("/?view=chat-threads&session=codex:019a0101-c01d-7a57-a7e5-ac0e00000103&session-tab=tools&session-pick=t:exec_command", '[data-session-state="ready"]'); },
   setup: async () => { await go("/?view=setup"); await settle(4000); },
   palette: async () => { await go("/"); await page.keyboard.press("Meta+k"); await settle(300); await page.keyboard.type("invite"); await settle(); },
   shortcuts: async () => { await go("/"); await page.keyboard.press("Shift+/"); await settle(); },

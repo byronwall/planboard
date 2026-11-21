@@ -24,7 +24,7 @@ const base = await new Promise((done) => server.stdout.on("data", (chunk) => { c
 
 const browser = await chromium.launch({ channel: "chrome" });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: Number(process.env.CHECK_WIDTH || 1440), height: Number(process.env.CHECK_HEIGHT || 900) } });
   page.on("console", (message) => message.type() === "error" && console.log(`console error: ${message.text()} ${message.location().url}`));
   page.on("pageerror", (error) => console.log(`page error: ${error.message}`));
   await page.goto(new URL(path, base).href);

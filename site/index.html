@@ -42,6 +42,7 @@
       <li><a href="#issues">Issues</a></li>
       <li><a href="#slack">Slack</a></li>
       <li><a href="#chats">Chat Threads</a></li>
+      <li><a href="#session">Session analysis</a></li>
     </ol>
     <h4>Everywhere</h4>
     <ol>
@@ -441,7 +442,20 @@ status: active
     <dt>Status rail</dt><dd>A spinner while a turn runs, an amber dot when the thread waits for you, a check when finished, an alert when a turn stopped, an hourglass while a background command still runs.</dd>
     <dt>Families</dt><dd>Subagents and side sessions sit under the thread that started them, with a tree line and a live count. They do not push other threads off the history limit.</dd>
     <dt>Columns</dt><dd>App and how the thread started, the model as people say it with its effort as five bars, the working folder and branch, and total tokens (hover for input, cache share and output).</dd>
-    <dt>Toolbar</dt><dd>App filter, group by status or workspace, sort by recent or most tokens, and search. <kbd>Enter</kbd> on a title opens the conversation in its desktop app.</dd>
+    <dt>Toolbar</dt><dd>App filter, group by status or workspace, sort by recent or most tokens, and search. <kbd>Enter</kbd> on a title opens the conversation in its desktop app; a click on the token count opens its session analysis.</dd>
+  </dl>
+</section>
+
+<section class="page" id="session">
+  <h2>Session analysis <span class="route">?session=claude:&lt;id&gt;</span></h2>
+  <p class="intro">One Codex or Claude Code session read in full from its local log: where the tokens went, which tools ran, how long they took and which failed. Open it from a thread's token count on Chat Threads or the chart button beside a chat link in a task.</p>
+  <figure><a href="images/session.webp"><img src="images/session.webp" loading="lazy" width="2160" height="1350" alt="Session analysis of a Codex session on its Tools tab"></a><figcaption>A fictional Codex session; the overlay reads only your own machine's logs.</figcaption></figure>
+  <dl class="parts">
+    <dt>Totals</dt><dd>Requests, input with the share read from cache, cache writes, uncached input, output, the largest prompt, cost (Claude Code's own total, or an estimate marked <strong>est.</strong>), tool calls and failures, messages, compactions, subagents and duration.</dd>
+    <dt>Chart</dt><dd>A bar per request: cache read, cache write and uncached input stacked, output below the axis, and a running total. Rules and marks show compactions, your messages, and model or effort changes. Click a bar to select its request.</dd>
+    <dt>Timeline</dt><dd>Requests, your messages and the changes between them in order, each request with its model, effort, prompt size, cache share and the tools it called.</dd>
+    <dt>Tools, Files, Agents</dt><dd>Calls, failures and time per tool; reads, edits and writes per file; and the main agent beside each subagent. Pick an agent to scope the whole view to it.</dd>
+    <dt>Inspector</dt><dd>The selected request's token breakdown and every tool call it made with its arguments, duration and result, or the full text of a message.</dd>
   </dl>
 </section>
 
@@ -528,7 +542,7 @@ status: active
       <tr><td>Outbound</td><td><code>/api/outbound</code> and <code>/api/outbound/*</code> (approve, send back, drop, mark sent)</td></tr>
       <tr><td>Code and plans</td><td><code>/api/code</code>, <code>/api/code/{pr,diff,commit,commits,worktree,file,notes,sides,run,runs,pr-index,plans,plan-doc,plan-map}</code></td></tr>
       <tr><td>Issues and people</td><td><code>/api/issues</code>, <code>/api/issues/{issue,fetch,agent}</code>, <code>/api/people</code>, <code>/api/link-metadata</code></td></tr>
-      <tr><td>Slack and chats</td><td><code>/api/slack</code>, <code>/api/slack/{thread,sync,agent}</code>, <code>/api/chat-threads</code></td></tr>
+      <tr><td>Slack and chats</td><td><code>/api/slack</code>, <code>/api/slack/{thread,sync,agent}</code>, <code>/api/chat-threads</code>, <code>/api/chat-session</code></td></tr>
       <tr><td>Diagrams</td><td><code>/api/diagram</code>, <code>/api/diagram/{open,copy}</code>, <code>/api/diagrams</code></td></tr>
       <tr><td>Setup</td><td><code>/api/config</code>, <code>/api/setup</code>, <code>/api/setup/{config,file,agent,prompt}</code>, <code>/api/version</code>, <code>/api/version/update</code></td></tr>
     </tbody>

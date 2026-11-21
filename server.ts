@@ -14,6 +14,7 @@ import { CodexDesktopClient, taskTitle, withImages } from "./codex-desktop.ts";
 import { createLinkMetadataStore, slackChannelNames } from "./link-metadata.ts";
 import { createCodeDashboard, githubImage } from "./code-dashboard.ts";
 import { createChatThreads } from "./chat-threads.ts";
+import { createSessionReader } from "./agent-session.ts";
 import { createPeople } from "./people.ts";
 import { createIssueTracker } from "./issues.ts";
 import { createPlans } from "./plans.ts";
@@ -990,6 +991,7 @@ async function readSteps() {
 }
 
 const chatThreads = createChatThreads();
+const readSession = createSessionReader();
 
 const READ_ONLY_POSTS = new Set(["/api/link-metadata", "/api/diagram/copy", "/api/diagram/open", "/api/open-slack", "/api/issues/fetch"]);
 
@@ -1005,6 +1007,11 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
     if (request.method === "GET" && url.pathname === "/api/chat-threads") {
       if (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(request.headers.host || "")) return json(response, 403, { error: "Chat Threads requires localhost." });
       return json(response, 200, await chatThreads());
+    }
+    if (request.method === "GET" && url.pathname === "/api/chat-session") {
+      if (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(request.headers.host || "")) return json(response, 403, { error: "Chat sessions require localhost." });
+      const session = await readSession(url.searchParams.get("key") || "");
+      return session ? json(response, 200, session) : json(response, 404, { error: "No log for this session on this computer." });
     }
     if (request.method === "GET" && url.pathname === "/api/documents") return json(response, 200, { documents: await listDocuments(), defaultPath: todayPath() });
     if (request.method === "GET" && url.pathname === "/api/document") return json(response, 200, await loadDocument(url.searchParams.get("path") || ""));

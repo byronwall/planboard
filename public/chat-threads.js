@@ -186,7 +186,8 @@ export function renderChatThreads(root) {
       ${threadCell(thread, query, kids, depth, open)}
       <td class="chat-workspace${sameFolder ? " is-bare" : ""}">${sameFolder ? "" : `<span class="chat-folder" data-tip="${escapeHtml(thread.cwd)}">${folderMark(folder(thread))}<span>${escapeHtml(folder(thread))}</span></span>`}${branch}</td>
       <td class="chat-model-cell">${modelCell(thread)}</td>
-      <td class="chat-num chat-usage">${known ? `<span data-tip="${exact}">${compact.format(thread.tokens)}</span>` : '<span class="chat-none is-unknown" data-tip="No usage recorded for this thread">—</span>'}</td>
+      <td class="chat-num chat-usage">${known && thread.session ? `<button type="button" class="chat-usage-button" data-session-key="${escapeHtml(thread.session)}" data-tip="${exact}. Open token use and tool calls.">${compact.format(thread.tokens)}</button>`
+        : known ? `<span data-tip="${exact}">${compact.format(thread.tokens)}</span>` : thread.session ? `<button type="button" class="chat-usage-button is-unknown" data-session-key="${escapeHtml(thread.session)}" data-tip="Open token use and tool calls">—</button>` : '<span class="chat-none is-unknown" data-tip="No usage recorded for this thread">—</span>'}</td>
       <td class="chat-num chat-age">${time ? `<time datetime="${time.toISOString()}" data-tip="${escapeHtml(time.toLocaleString())}">${age === "0m" ? "now" : age}</time>` : "—"}</td>
     </tr>`;
   }

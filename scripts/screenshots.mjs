@@ -26,7 +26,7 @@ const config = JSON.parse(await readFile(join(workspace, "config/viewer.json"), 
 config.issues.command = ["node", join(repo, "fixtures/jira/fake-acli.js")];
 await writeFile(join(workspace, "config/viewer.json"), JSON.stringify(config, null, 2));
 
-const server = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", join(repo, "server.ts")], { env: { ...process.env, PLANNING_ROOT: workspace, PLAN_VIEWER_PORT: String(port) }, stdio: ["ignore", "pipe", "inherit"] });
+const server = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", join(repo, "server.ts")], { env: { ...process.env, CLAUDE_CONFIG_DIR: join(repo, "examples/agent-logs/claude"), CODEX_HOME: join(repo, "examples/agent-logs/codex"), PLANNING_ROOT: workspace, PLAN_VIEWER_PORT: String(port) }, stdio: ["ignore", "pipe", "inherit"] });
 await new Promise((resolve) => server.stdout.on("data", (chunk) => /is ready/.test(chunk) && resolve()));
 
 const browser = await chromium.launch({ channel: "chrome" });
@@ -68,6 +68,11 @@ const shots = {
     await page.goto(`${base}/?view=chat-threads`);
     await page.waitForSelector('[data-chat-threads-state="ready"]'); await settle();
     await page.unroute("**/api/chat-threads");
+  },
+  // The session overlay reads the fictional logs in examples/agent-logs (the server's CLAUDE_CONFIG_DIR and CODEX_HOME).
+  session: async () => {
+    await page.goto(`${base}/?view=chat-threads&session=claude:5e55a0c1-0103-4a11-9c3e-ac0e00000101&session-agent=all&session-pick=r9`);
+    await page.waitForSelector('[data-session-state="ready"]'); await settle();
   },
   // The diff overlay for the newest commit that touches several files.
   diff: async () => {

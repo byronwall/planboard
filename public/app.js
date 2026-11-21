@@ -10,6 +10,7 @@ import { assetHref, delimitedTable, diagramHref, documentHref, refreshAssetImage
 import { TABS as CODE_TABS, connectPlanning, setPeople, ago, copyPrompt, cachedPrIndex, commitLinkMatch, diffSize, hideTip, icon, showTip, modKey, installCommitCards, loadPrIndex, openCommit, openPrOverlay, openWorktreeOverlay, openServers, isSummonKey, prefetchPr, renderCodePage } from "./code.js";
 import { TABS as ISSUE_TABS, cachedIssues, isMyIssue, loadIssues, openIssue, renderIssuesPage } from "./issues.js";
 import { renderChatThreads } from "./chat-threads.js";
+import { openSession } from "./session.js";
 import { renderActivityPage } from "./activity.js";
 import { openSlackThread, refreshSlackStars, setSlackFavorites, setSlackNotice, slackThreadTitle } from "./slack.js";
 import { channelLabel, fresh as freshThread, lastActive, opener, permalink, refreshSlackPage, renderSlackPage } from "./slack-page.js";
@@ -4637,6 +4638,18 @@ const OVERLAYS = [
     result: (params) => { const plan = params.get("plan"); return { icon: "initiative", title: escapeHtml(planTitle(plan) || plan.split("/").pop()), detail: escapeHtml(`${plan.split(":")[0].split("/").pop()} · ${params.get("doc")?.split("/").pop() || "initiative"}`), side: "Initiative" }; },
     closed: (params) => ["initiative reader", planTitle(params.get("plan")) || params.get("plan").split("/").pop()] },
 ];
+OVERLAYS.push({ param: "session", extra: ["session-tab", "session-agent", "session-pick"],
+  open: (params) => openSession(params.get("session"), { tab: params.get("session-tab") || "", agent: params.get("session-agent") || "", pick: params.get("session-pick") || "" }),
+  result: (params) => ({ icon: "chats", title: escapeHtml(document.querySelector(".session-overview[open] h3")?.textContent || params.get("session")), detail: "Session analysis", side: "Session" }),
+  closed: (params) => ["session analysis", document.querySelector(".session-overview h3")?.textContent || params.get("session")] });
+// A chart button beside a Codex or Claude chat (a link in a document, a Chat Threads row) opens its session analysis.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-session-key]");
+  if (!button || event.metaKey || event.ctrlKey || event.shiftKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openSession(button.dataset.sessionKey);
+}, true);
 // `page` keys a visit by its page too, since `table=2` means a different table on every document.
 OVERLAYS.push({ param: "table", extra: ["table-size", "table-fill"], page: true,
   open: (params) => { const wrapper = pageTables()[Number(params.get("table")) - 1]; if (wrapper && !elements.tableViewer.open) showTableViewer(wrapper, params.get("table-size") || "", params.has("table-size") ? params.get("table-fill") !== "0" : null); },

@@ -109,3 +109,5 @@ Every prompt the viewer sends is a Markdown file in the viewer's [`prompts/`](..
 | `LINEAR_API_KEY` | Linear key for titles, states, and the Issues page. `[linear] API_KEY` in `config.toml` works too. |
 | `SLACK_TOKEN` | Slack token for message and channel titles. `[slack] TOKEN` in `config.toml` works too. |
 | `TZ` | Time zone that decides which day is "today". |
+| `CLAUDE_CONFIG_DIR` | Claude Code's folder, where Chat Threads and the session overlay read transcripts. Defaults to `~/.claude`. |
+| `CODEX_HOME` | Codex's folder, where Chat Threads and the session overlay read rollouts and the state database. Defaults to `~/.codex`. |

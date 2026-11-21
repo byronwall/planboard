@@ -18,7 +18,9 @@ type Usage = { tokens: number; input: number; cached: number; output: number };
 // label is short enough for one line; detail, when present, is the full command for a tooltip.
 type Task = { kind: "command" | "agent"; label: string; detail?: string };
 type AgentDetails = { model?: string; usage?: Usage; cliId?: string; live?: boolean; tasks?: Task[]; effort?: string; role?: string; nickname?: string; parent?: string; kind?: "subagent" | "automation" | "agent";
-  tokens?: number | null; branch?: string; startedAt?: number };
+  tokens?: number | null; branch?: string; startedAt?: number;
+  // session: the key /api/chat-session reads this thread's log by ("codex:<id>" or "claude:<cli session id>").
+  session?: string };
 type Thread = AgentDetails & {
   id: string;
   provider: Provider;
@@ -185,17 +187,23 @@ async function firstRecord(path: string) {
   } finally { await file.close(); }
 }
 
-async function codexIndex(home: string) {
+// Runs SQL against the newest Codex state database, or returns null when Codex has none.
+export async function codexQuery(home: string) {
   const databases = await children(home, false, /^state_\d+\.sqlite$/);
   const database = databases.sort((a, b) => Number(basename(b).match(/\d+/)?.[0]) - Number(basename(a).match(/\d+/)?.[0]))[0];
-  if (!database) return [] as CodexIndexRow[];
+  if (!database) return null;
   const open = (file: string, sql: string) => run("/usr/bin/sqlite3", ["-readonly", "-json", "-cmd", ".timeout 1000", file, sql], { timeout: 3000, maxBuffer: 8 * 1024 * 1024 });
   // A read-only open fails (SQLITE_CANTOPEN) when the database is in WAL mode and has no -shm file to share, as after Codex
   // quits. With no -wal file there are no pending writes, so reading the file as immutable is safe then.
-  const query = (sql: string) => open(database, sql).catch(async (error) => {
+  return (sql: string) => open(database, sql).catch(async (error) => {
     if (error.code !== 14 || await fileInfo(`${database}-wal`)) throw error;
     return open(`file:${encodeURI(database)}?immutable=1`, sql);
   });
+}
+
+async function codexIndex(home: string) {
+  const query = await codexQuery(home);
+  if (!query) return [] as CodexIndexRow[];
   // Columns arrive independently across Codex releases. Select only fields this index supports.
   const schema = await query("PRAGMA table_info(threads)");
   const columns = new Set(JSON.parse(schema.stdout || "[]").map((column: JSONObject) => column.name));
@@ -255,7 +263,7 @@ async function codexThreads(home: string, files: LiveFiles | null, turns: Map<st
     const spawned = spawn(row.source);
     const role = row.role || string(spawned?.agent_role) || string(spawned?.agent_path).split("/").filter(Boolean).at(-1) || "";
     const kind = spawned || row.source.includes('"subagent"') ? "subagent" : row.origin === "automation" ? "automation" : row.origin === "agent_created_thread" ? "agent" : undefined;
-    const thread: Thread = { id, provider: "Codex", source, model: row.model || undefined, effort: row.effort || undefined, role, nickname: row.nickname || string(spawned?.agent_nickname) || undefined,
+    const thread: Thread = { id, session: `codex:${id}`, provider: "Codex", source, model: row.model || undefined, effort: row.effort || undefined, role, nickname: row.nickname || string(spawned?.agent_nickname) || undefined,
       parent: string(spawned?.parent_thread_id) || undefined, kind, tokens: row.tokens, branch: row.branch, startedAt: Number(row.startedAt) || undefined,
       title: displayTitle(row.title || role.replaceAll("_", " "), basename(row.cwd) || "Codex thread"), cwd: row.cwd,
       updatedAt: state === "active" ? info.mtimeMs : turn.updatedAt, state, url: `codex://threads/${id}`, ...(tasks.length ? { tasks } : {}) };
@@ -506,6 +514,7 @@ async function claudeUsage(threads: Thread[], config: string, cache: UsageCache)
     delete thread.cliId;
     delete thread.live;
     if (!id) continue;
+    thread.session = `claude:${id}`;
     let path = join(projects, thread.cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${id}.jsonl`);
     if (!await fileInfo(path)) {
       // A session that changed folder keeps its transcript under the folder it started in.
