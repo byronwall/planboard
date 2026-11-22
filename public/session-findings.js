@@ -28,9 +28,19 @@ export function toolFiles(tool) {
 // The shell command of a call, for Claude's Bash and Codex's exec_command, shell and code-mode commands.
 export function command(tool) {
   const args = parseArgs(tool);
-  if (!args) return /^(?:shell|local_shell)$/.test(tool.name) ? tool.args : "";
+  if (!args) return /^(?:shell|local_shell)$/.test(tool.name) ? tool.args : codeModeCommands(tool.args);
   const value = args.command ?? args.cmd;
   return Array.isArray(value) ? value.join(" ") : typeof value === "string" ? value : "";
+}
+
+// Codex code mode runs JavaScript such as `text(await tools.exec_command({cmd:"ls -la"}))`; the commands are the cmd strings.
+function codeModeCommands(code) {
+  // A log can cut the arguments short, so a string may have no closing quote.
+  const found = [...String(code || "").matchAll(/exec_command\(\s*\{\s*["']?cmd["']?\s*:\s*("(?:[^"\\]|\\.)*(?:"|$)|'(?:[^'\\]|\\.)*(?:'|$)|`[^`]*(?:`|$))/g)];
+  return found.map(([, literal]) => {
+    if (literal.startsWith('"')) { try { return JSON.parse(literal); } catch {} }
+    return literal.slice(1).replace(/["'`]$/, "").replace(/\\(.)/g, "$1");
+  }).join("\n");
 }
 
 const tokens = (chars) => Math.round(chars / CHARS_PER_TOKEN);
@@ -69,13 +79,18 @@ export function findings(data) {
       open.set(key, [...(open.get(key) || []), tool]);
     }
     runs.push(...open.values());
-    for (const same of runs) {
-      if (same.length < 3) continue;
-      const label = command(same[0]) || summary(same[0]);
-      const waited = same.reduce((sum, tool) => sum + (tool.dur || 0), 0);
-      found.push({ kind: "repeat", severity: "problem", agent, title: `Ran the same ${same[0].name} call ${same.length} times`,
-        detail: `${label.slice(0, 160)}${waited ? ` · ${seconds(waited)} spent` : ""}`, calls: same.map((tool) => tool.index),
-        tokens: tokens(same.slice(1).reduce((sum, tool) => sum + tool.size, 0)) });
+    // Runs of one check at different times make one finding, even when its arguments vary a little (a long session
+    // polling a server with `df -h` one hour and `df -B1` the next): they group by the command up to its first quote.
+    const label = (same) => command(same[0]) || summary(same[0]);
+    const groups = Map.groupBy(runs.filter((same) => same.length >= 3), (same) => (label(same).split(/['"`]/)[0] || label(same)).trim().slice(0, 120));
+    for (const [, group] of groups) {
+      const all = group.flat().sort((a, b) => a.t - b.t);
+      const waited = all.reduce((sum, tool) => sum + (tool.dur || 0), 0);
+      const names = [...new Set(all.map((tool) => tool.name))];
+      const variants = new Set(group.map(label)).size;
+      found.push({ kind: "repeat", severity: "problem", agent, title: `Ran the same ${command(all[0]) ? command(all[0]).trim().split(/\s+/)[0].split("/").at(-1) : names.join(" / ")} call ${all.length} times${group.length > 1 ? ` in ${group.length} runs` : ""}`,
+        detail: `${label(group[0]).slice(0, 160)}${variants > 1 ? ` · ${variants} variants` : ""}${waited ? ` · ${seconds(waited)} spent` : ""}`, calls: all.map((tool) => tool.index),
+        tokens: tokens(group.reduce((sum, same) => sum + same.slice(1).reduce((total, tool) => total + tool.size, 0), 0)) });
     }
   }
 
@@ -144,7 +159,7 @@ export function findings(data) {
   const slow = tools.filter((tool) => (tool.dur || 0) >= SLOW_CALL && tool.spawns === undefined && !/^(?:Agent|Task|wait|wait_agent)$/.test(tool.name));
   if (slow.length) {
     found.push({ kind: "slow", severity: "info", agent: slow[0].agent, agents: [...new Set(slow.map((tool) => tool.agent))],
-      title: `${plural(slow.length, "call")} took over a minute`, detail: slow.map((tool) => `${summary(tool).slice(0, 60)} ${seconds(tool.dur)}`).join(" · "),
+      title: `${plural(slow.length, "call")} took over a minute`, detail: slowest(slow),
       calls: slow.map((tool) => tool.index), tokens: 0, ms: slow.reduce((sum, tool) => sum + tool.dur, 0) });
   }
 
@@ -164,11 +179,22 @@ export function findings(data) {
 }
 
 const firstLine = (text) => String(text || "").replace(/<\/?[\w-]+>/g, "").split("\n").map((line) => line.trim()).find((line) => line && !/^(?:Exit code|Wall time|Output):?/.test(line)) || "";
+// A call in a few words: its files, its command without the leading `cd`, or its pattern, title or description.
+// Arguments with none of those fall back to the tool's name, never raw JSON.
 function summary(tool) {
   const files = toolFiles(tool);
   if (files.length) return files.map(base).join(", ");
+  const shell = command(tool);
+  if (shell) return shell.replace(/^\s*(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, "").replace(/\s+/g, " ");
   const args = parseArgs(tool);
-  return command(tool) || String(args?.pattern ?? args?.query ?? args?.description ?? args?.url ?? tool.args).replace(/\s+/g, " ");
+  if (!args) return String(tool.args).replace(/\s+/g, " ");
+  const value = [args.pattern, args.query, args.title, args.description, args.url, args.prompt, args.message].find((item) => typeof item === "string" && item.trim());
+  return (value ?? (tool.name.startsWith("mcp__") ? tool.name.split("__").slice(2).join("__") : tool.name)).replace(/\s+/g, " ");
+}
+// The slowest calls first, three of them, then how many more.
+function slowest(slow) {
+  const top = [...slow].sort((a, b) => b.dur - a.dur);
+  return `${top.slice(0, 3).map((tool) => `${summary(tool).slice(0, 56)} (${seconds(tool.dur)})`).join(" · ")}${top.length > 3 ? `, and ${top.length - 3} more` : ""}`;
 }
 function seconds(ms) {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;

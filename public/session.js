@@ -7,6 +7,7 @@ import { formatDateTime } from "./dates.js";
 import { withNote } from "./config.js";
 import { openNotePopover } from "./note-popover.js";
 import { command, findings, findingsMarkdown, parseArgs, toolFiles } from "./session-findings.js";
+import { commandNames, shellHtml, shellLines } from "./shell.js";
 
 // One agent chat session read in full (`?session=claude:<id>` or `codex:<id>`). A line of totals and a chart of every
 // model request sit over six tabs beside an inspector: Findings (problems and waste, worst first, from
@@ -31,10 +32,37 @@ export function span(ms) {
   return `${Math.floor(ms / 3_600_000)}h ${String(Math.round(ms % 3_600_000 / 60_000)).padStart(2, "0")}m`;
 }
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+// A clock without AM/PM for dense rows; the turn rows above them carry the full time.
+const short = (t) => clock(t).replace(/\s?[AP]M$/i, "");
+const minute = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const modelName = (id) => modelInfo(id)?.name || id || "—";
 const home = (text) => String(text ?? "").replace(/\/Users\/[^/\s"]+/g, "~");
 const agentName = (index) => index ? data.agents[index].label : "Main agent";
+// Each agent keeps one color in the chart, the timeline and the agent menu. The main agent is neutral.
+const AGENT_COLORS = ["#5b6b85", "#8b4fd8", "#1f8aa8", "#c0662b", "#2f9e78", "#c23d7a", "#7a8a1f", "#b7791f", "#3f6fd8"];
+const agentColor = (index) => AGENT_COLORS[index ? 1 + (index - 1) % (AGENT_COLORS.length - 1) : 0];
+const agentDot = (index) => `<i class="session-dot" style="--a:${agentColor(index)}"></i>`;
 const ACTIONS = { Read: "read", NotebookRead: "read", view_image: "read", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit", apply_patch: "edit", Write: "write" };
+// An idle stretch longer than the 5-minute prompt cache: the chart breaks there and the timeline says so.
+const IDLE = 5 * 60_000;
+const idleLabel = (ms) => ms < 3_600_000 ? `${Math.round(ms / 60_000)}m` : `${Math.floor(ms / 3_600_000)}h${Math.round(ms % 3_600_000 / 60_000) ? `${Math.round(ms % 3_600_000 / 60_000)}m` : ""}`;
+const TOOL_KINDS = [
+  [/^(?:Read|NotebookRead|view_image)$/, "read", "file-text"], [/^(?:Edit|MultiEdit|Write|NotebookEdit|apply_patch)$/, "edit", "pen-line"],
+  [/^(?:Bash|BashOutput|shell|local_shell|exec_command|write_stdin|KillShell)$/, "shell", "terminal"], [/^(?:Grep|Glob|LS|WebSearch|web_search|ToolSearch)$/, "search", "search"],
+  [/^(?:Task|Agent|spawn_agent|send_input|wait)$/, "agent", "bot"], [/^(?:WebFetch)$/, "web", "globe"], [/^mcp__/, "mcp", "network"],
+];
+const toolKind = (name) => { const hit = TOOL_KINDS.find(([pattern]) => pattern.test(name)); return hit ? { kind: hit[1], icon: hit[2] } : { kind: "other", icon: "code" }; };
+const toolLabel = (name) => name.startsWith("mcp__") ? name.split("__").slice(2).join("__") || name : name;
+// A few words on what a call touched, for the timeline: the commands a shell call ran, a file's name, a pattern.
+function callHint(tool) {
+  const shell = command(tool);
+  if (shell) return commandNames(shell).join(" ");
+  const files = toolFiles(tool);
+  if (files.length) return files.map((path) => path.split("/").filter(Boolean).at(-1)).join(", ");
+  const args = parseArgs(tool);
+  const value = args?.pattern ?? args?.query ?? args?.description ?? args?.url;
+  return typeof value === "string" ? value : "";
+}
 
 // What each kind of finding means and what usually does better, for the inspector.
 const ADVICE = {
@@ -56,9 +84,24 @@ function argSummary(tool) {
   if (!args) return home(tool.args.split("\n").find((line) => line.trim()) || "");
   const files = toolFiles(tool);
   if (files.length) return home(files.map(relative).join(", "));
-  const first = command(tool) || (args.pattern ?? args.query ?? args.url ?? args.description ?? args.prompt ?? args.message ?? args.code ?? args.task_name);
+  const first = command(tool) || (args.pattern ?? args.query ?? args.url ?? args.title ?? args.description ?? args.prompt ?? args.message ?? args.code ?? args.task_name);
   if (first !== undefined && first !== "") return home(Array.isArray(first) ? first.join(" ") : String(first)).replace(/\s+/g, " ");
   return home(JSON.stringify(args)).slice(0, 300);
+}
+// Markdown read as one line of plain text, for previews: no emphasis marks, code ticks or link targets.
+const plain = (text) => String(text ?? "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/(\*\*|__|`|^#+\s*|^\s*[-*]\s+)/gm, "").replace(/\s+/g, " ").trim();
+// A message for a one- or two-line preview. Automation runs arrive as tagged text (`<heartbeat><automation_id>…`): your
+// side reads as "Automation · <id>" and its instructions, the agent's reply as its decision and message. Other tags are
+// dropped. `named: false` leaves out the automation's name, which every row of such a session repeats.
+function messagePreview(text, { named = true } = {}) {
+  const value = String(text ?? "");
+  const tag = (name) => new RegExp(`<${name}>([\\s\\S]*?)(?:</${name}>|$)`).exec(value)?.[1]?.trim();
+  const id = tag("automation_id");
+  if (!id) return value.replace(/<\/?[\w:-]+>/g, " ").replace(/\s+/g, " ").trim();
+  const decision = tag("decision");
+  const body = (tag("message") ?? tag("instructions") ?? "").replace(/<\/?[\w:-]+>/g, " ").replace(/\s+/g, " ").trim();
+  const said = decision ? `${/DONT|NO/i.test(decision) ? "Quiet" : "Notified"}: ${body}` : body;
+  return named ? `Automation · ${id}${said ? ` — ${said}` : ""}` : said;
 }
 const relative = (path) => { const root = data?.cwd ? `${data.cwd.replace(/\/$/, "")}/` : ""; return root && path.startsWith(root) ? path.slice(root.length) : home(path); };
 
@@ -68,14 +111,20 @@ let notes = [];
 let notesPath = "";
 let found = [];
 let notify = () => {};
-let ui = { tab: "", agent: 0, pick: null, find: "", focus: null };
+let ui = { tab: "", agent: 0, pick: null, find: "", focus: null, menu: false, only: false };
 export const setSessionNotice = (show) => { notify = show; };
+// The chart sits beside the totals (compact), spans the overlay taller (wide), or folds away (hidden); the choice is
+// kept per browser.
+const CHART_KEY = "plan-viewer:session-chart";
+const chartMode = () => { try { const value = localStorage.getItem(CHART_KEY); return value === "0" || value === "hidden" ? "hidden" : value === "wide" ? "wide" : "compact"; } catch { return "compact"; } };
+const setChartMode = (mode) => { try { localStorage.setItem(CHART_KEY, mode); } catch {} };
 
 export function openSession(key, { tab = "", agent = "", pick = "" } = {}) {
   if (!dialog) build();
-  ui = { tab: TABS[tab] ? tab : "", agent: agent === "all" ? -1 : Number(agent) || 0, pick: pick || null, find: "", focus: null };
+  ui = { tab: TABS[tab] ? tab : "", agent: agent === "all" ? -1 : Number(agent) || 0, pick: pick || null, find: "", focus: null, menu: false, only: ui.only };
   dialog.dataset.key = key;
   setOverlayParams({ session: key });
+  dialog.querySelector('[data-s="head"]').hidden = false;
   dialog.querySelector('[data-s="head"]').innerHTML = `<div class="session-title"><h3>Loading session…</h3></div><span class="code-spacer"></span>${closeButton()}`;
   dialog.querySelector('[data-s="main"]').innerHTML = `<p class="code-muted session-note">Reading the log…</p>`;
   dialog.dataset.sessionState = "loading";
@@ -96,6 +145,7 @@ export function openSession(key, { tab = "", agent = "", pick = "" } = {}) {
     dialog.dataset.sessionState = "ready";
   }).catch((error) => {
     if (dialog.dataset.key !== key) return;
+    dialog.querySelector('[data-s="head"]').hidden = false;
     dialog.querySelector('[data-s="head"]').innerHTML = `<div class="session-title"><h3>Session not found</h3><p class="code-muted">${escapeHtml(key)}</p></div><span class="code-spacer"></span>${closeButton()}`;
     dialog.querySelector('[data-s="main"]').innerHTML = `<p class="session-note">${escapeHtml(error.message)} Planboard reads Claude Code and Codex logs from this computer's ~/.claude and ~/.codex folders.</p>`;
     dialog.dataset.sessionState = "error";
@@ -137,12 +187,6 @@ function build() {
     renderBody();
   });
   dialog.addEventListener("keydown", onKey);
-  dialog.addEventListener("change", (event) => {
-    if (!event.target.matches("[data-s-agent]")) return;
-    ui.agent = Number(event.target.value);
-    ui.pick = null;
-    renderBody();
-  });
   dialog.addEventListener("pointerover", (event) => {
     const target = event.target.closest("[data-tip]");
     if (target) showTip(target); else hideTip();
@@ -191,17 +235,29 @@ function render() {
   const efforts = [...new Set(data.requests.filter((request) => request.agent === 0).map((request) => request.effort).filter(Boolean))];
   const folder = data.cwd.split("/").filter(Boolean).at(-1) || "";
   const facts = [models.map(modelName).join(" → "), efforts.join(" → "), folder, data.branch, data.start && formatDateTime(new Date(data.start))].filter(Boolean);
-  head.innerHTML = `<span class="session-mark">${brandMark(data.provider === "Claude" ? "claude" : "codex", `chat-app-mark is-${data.provider.toLowerCase()}`)}</span>
-    <div class="session-title"><h3>${escapeHtml(data.title)}</h3><p class="code-muted"><span data-tip="${escapeHtml(home(data.path))}">${escapeHtml(data.provider === "Claude" ? "Claude Code" : "Codex")}</span> · ${facts.map((fact, index) => index === 2 ? `<span data-tip="${escapeHtml(home(data.cwd))}">${escapeHtml(fact)}</span>` : escapeHtml(fact)).join(" · ")}</p></div>
-    <span class="code-spacer"></span>
-    <button type="button" class="code-bar-button" data-s-review data-tip="Save a prompt that asks an agent to explain the findings and your notes, and propose lasting fixes">${glyph("sparkles")}Review with an agent</button>
-    <a class="code-bar-button" href="${escapeHtml(data.url)}">${glyph("external-link")}Open in ${data.provider === "Claude" ? "Claude" : "Codex"}</a>${closeButton()}`;
-  const agents = data.agents.length > 1 ? `<label class="session-agent">${glyph("bot")}<select data-s-agent aria-label="Agent">${data.agents.map((agent, index) => `<option value="${index}"${ui.agent === index ? " selected" : ""}>${escapeHtml(agentName(index))}</option>`).join("")}<option value="-1"${ui.agent < 0 ? " selected" : ""}>All agents (${data.agents.length})</option></select></label>` : "";
-  dialog.querySelector('[data-s="main"]').innerHTML = `<div class="session-stats" data-s="stats"></div>
-    <div class="session-chart" data-s="chart"></div>
+  // The loading header steps aside: the title and totals sit on the left and the chart runs to the top of the overlay.
+  head.hidden = true;
+  const app = data.provider === "Claude" ? "Claude Code" : "Codex";
+  const meta = `<span data-tip="${escapeHtml(home(data.path))}">${escapeHtml(app)}</span> · ${facts.map((fact, index) => index === 2 ? `<span data-tip="${escapeHtml(home(data.cwd))}">${escapeHtml(fact)}</span>` : escapeHtml(fact)).join(" · ")}`;
+  const title = `<div class="session-id"><span class="session-mark">${brandMark(data.provider === "Claude" ? "claude" : "codex", `chat-app-mark is-${data.provider.toLowerCase()}`)}</span>
+    <div class="session-title"><h3 data-tip="${escapeHtml(data.title)}">${escapeHtml(data.title)}</h3><p class="code-muted">${meta}</p></div></div>`;
+  const actions = `<button type="button" class="session-chart-button is-action" data-s-review data-tip="Save a prompt that asks an agent to explain the findings and your notes, and propose lasting fixes">${glyph("sparkles")}Review with an agent</button>
+    <a class="session-chart-button is-action" href="${escapeHtml(data.url)}">${glyph("external-link")}Open in ${data.provider === "Claude" ? "Claude" : "Codex"}</a>`;
+  const agents = data.agents.length > 1 ? `<div class="session-agent" data-s="agent"></div>` : "";
+  const legend = `<span class="session-legend" aria-label="Chart key"><span class="is-cached" data-tip="Prompt tokens read from the prompt cache">Cached</span><span class="is-write" data-tip="Prompt tokens written to the prompt cache">Written</span><span class="is-fresh" data-tip="Prompt tokens neither read from nor written to the cache">Uncached</span><span class="is-output">Output</span><span class="is-cumulative" data-tip="Running total of tokens processed">Total</span><span class="is-idle" data-tip="No request for longer than the 5-minute prompt cache">Idle</span><span class="is-compact">Compacted</span><span class="is-msg" data-tip="Your messages">You</span><span class="is-fail" data-tip="A failed tool call">Failed</span></span>`;
+  dialog.querySelector('[data-s="main"]').innerHTML = `<div class="session-top" data-s="top" data-chart="${chartMode()}">
+      <div class="session-stats">${title}<span class="session-stat-list" data-s="stats"></span></div>
+      <div class="session-chart-panel"><div class="session-chart-bar">${actions}<span class="session-bar-rule"></span>
+        <button type="button" class="session-chart-button is-show" data-s-chart="compact" data-tip="Show the chart">${glyph("chart-gantt")}Show chart</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="wide" data-tip="Widen the chart" aria-label="Widen the chart">${glyph("maximize")}</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="compact" data-tip="Put the chart beside the totals" aria-label="Put the chart beside the totals">${glyph("minimize")}</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="hidden" data-tip="Hide the chart" aria-label="Hide the chart">${glyph("eye")}</button>
+        <span class="session-focus" data-s="focus"></span>${legend}<span class="code-spacer"></span>${closeButton()}</div>
+      <div class="session-chart" data-s="chart"></div></div></div>
     <div class="session-toolbar"><div class="code-segment" role="tablist" aria-label="View">${Object.entries(TABS).filter(([key]) => key !== "agents" || data.agents.length > 1).map(([key, label]) => `<button type="button" role="tab" data-s-tab="${key}" aria-pressed="${ui.tab === key}">${label}<span class="code-count" data-s-count="${key}"></span></button>`).join("")}</div>
       ${agents}<label class="code-filter">${glyph("search")}<input type="search" data-s-find placeholder="Find a tool, file or message…" aria-label="Find in this session" spellcheck="false"></label>
-      <span class="session-focus" data-s="focus"></span></div>
+      <span class="code-spacer"></span>
+      <button type="button" class="session-only" data-s-only aria-pressed="false" data-tip="Show only your messages, each with the agent's last word" hidden>${glyph("user")}Your messages only</button></div>
     <div class="session-split"><div class="session-list" data-s="list"></div><aside class="session-inspector" data-s="inspector" aria-label="Details"></aside></div>`;
   renderBody();
 }
@@ -220,11 +276,15 @@ function renderBody() {
     stat("Peak context", num(all.peak), `The largest single prompt: ${exact(all.peak)} tokens`),
     stat("Tool calls", `${exact(all.tools)}${all.errors ? ` <em>${all.errors} failed</em>` : ""}`),
     stat("Turns", exact(all.messages), "Messages the user typed"),
-    ...(data.agents.length > 1 && ui.agent < 0 ? [stat("Subagents", exact(data.agents.length - 1))] : []),
     stat("Duration", span(all.duration), "First to last logged event"),
     ...(wait > 1000 ? [stat("Waiting on you", span(wait), "Time between the agent's last step and your next message")] : []),
   ].join("");
   for (const button of dialog.querySelectorAll("[data-s-tab]")) button.setAttribute("aria-pressed", String(button.dataset.sTab === ui.tab));
+  const picker = dialog.querySelector('[data-s="agent"]');
+  if (picker) picker.innerHTML = agentPicker();
+  const only = dialog.querySelector("[data-s-only]");
+  only.hidden = ui.tab !== "timeline";
+  only.setAttribute("aria-pressed", String(ui.only));
   const counts = { findings: view.findings.length, timeline: view.requests.length, tools: new Set(view.tools.map((tool) => tool.name)).size, files: fileRows(view.tools).length, agents: data.agents.length, notes: notes.length };
   for (const count of dialog.querySelectorAll("[data-s-count]")) {
     count.textContent = counts[count.dataset.sCount];
@@ -232,48 +292,98 @@ function renderBody() {
   }
   if (ui.tab === "findings" && !ui.pick && view.findings[0]) ui.focus = view.findings[0].id;
   const focus = focused();
-  dialog.querySelector('[data-s="focus"]').innerHTML = focus && ui.tab !== "findings" ? `<span>${glyph(SEVERITY_ICON[focus.severity])}${escapeHtml(focus.title)}</span><button type="button" class="code-icon-button" data-s-unfocus aria-label="Stop highlighting this finding">${glyph("x")}</button>` : "";
+  dialog.querySelector('[data-s="focus"]').innerHTML = focus && ui.tab !== "findings" ? `<span data-tip="This finding's requests are lit on the chart and tinted in the timeline">Highlighting <b>${escapeHtml(focus.title)}</b></span><button type="button" class="code-icon-button" data-s-unfocus aria-label="Stop highlighting this finding">${glyph("x")}</button>` : "";
   setOverlayParams({ "session-tab": ui.tab === (found.length ? "findings" : "timeline") ? "" : ui.tab, "session-agent": ui.agent === 0 ? "" : ui.agent < 0 ? "all" : String(ui.agent), "session-pick": ui.pick || "" });
   const list = dialog.querySelector('[data-s="list"]');
   const top = list.scrollTop;
   list.innerHTML = { findings: findingsTable, tools: toolsTable, files: filesTable, agents: agentsTable, notes: notesTable }[ui.tab]?.(view) ?? timelineTable(view);
   list.scrollTop = top;
   dialog.querySelector('[data-s="inspector"]').innerHTML = inspector(view);
+  markClamps(dialog.querySelector('[data-s="inspector"]'));
   drawChart();
+}
+
+// ---------- Agent picker ----------
+// A button names the agent in scope; its menu lists the main agent, each subagent with what it was for, its kind,
+// model, size and a bar of when it ran on the session's clock, and All agents.
+
+function agentStats(index) {
+  const requests = data.requests.filter((request) => request.agent === index);
+  const tools = data.tools.filter((tool) => tool.agent === index);
+  const costs = requests.map((request) => request.cost).filter((cost) => cost !== null && cost !== undefined);
+  return { requests: requests.length, tools: tools.length, failed: tools.filter((tool) => tool.error).length, cost: costs.length ? costs.reduce((a, b) => a + b, 0) : null };
+}
+
+function agentPicker() {
+  const current = ui.agent < 0 ? `<span class="session-agent-name">All agents</span><small>${data.agents.length}</small>`
+    : `${agentDot(ui.agent)}<span class="session-agent-name">${escapeHtml(agentName(ui.agent))}</span>${ui.agent ? `<small>subagent ${ui.agent} of ${data.agents.length - 1}</small>` : `<small>+${plural(data.agents.length - 1, "subagent")}</small>`}`;
+  const button = `<button type="button" class="session-agent-button" data-s-agent-button aria-haspopup="listbox" aria-expanded="${ui.menu}">${glyph("bot")}${current}${glyph("chevron-right", "code-icon session-chevron")}</button>`;
+  if (!ui.menu) return button;
+  const start = data.start, length = Math.max(1, data.end - data.start);
+  const row = (index) => {
+    const agent = data.agents[index];
+    const stats = agentStats(index);
+    const left = 100 * ((agent.start || start) - start) / length, width = Math.max(1.5, 100 * ((agent.end || start) - (agent.start || start)) / length);
+    const kind = [agent.type && agent.type !== agent.label ? agent.type : "", modelName(agent.model)].filter((part) => part && part !== "—").join(" · ");
+    const facts = [plural(stats.requests, "request"), plural(stats.tools, "call"), stats.failed && `<em>${stats.failed} failed</em>`, span(agent.end - agent.start), stats.cost !== null && usd(stats.cost)].filter(Boolean).join(" · ");
+    return `<button type="button" role="option" class="session-agent-option" data-s-agent-pick="${index}" aria-selected="${ui.agent === index}">${agentDot(index)}
+      <span class="session-agent-text"><b>${escapeHtml(agentName(index))}</b>${kind ? `<small>${escapeHtml(kind)}</small>` : ""}<span>${facts}</span></span>
+      <span class="session-agent-run" data-tip="${escapeHtml(`${agent.start ? clock(agent.start) : "—"} – ${agent.end ? clock(agent.end) : "—"}`)}"><i style="left:${left.toFixed(1)}%;width:${Math.min(width, 100 - left).toFixed(1)}%;--a:${agentColor(index)}"></i></span></button>`;
+  };
+  const subs = data.agents.map((_, index) => index).slice(1);
+  return `${button}<div class="session-agent-menu" role="listbox" aria-label="Agent">${row(0)}
+    <p class="session-agent-group">Subagents <small>${subs.length} · started by the main agent</small></p>${subs.map(row).join("")}
+    <button type="button" role="option" class="session-agent-option is-all" data-s-agent-pick="-1" aria-selected="${ui.agent < 0}">${glyph("layers")}<span class="session-agent-text"><b>All agents</b><span>Every request on one timeline, each row marked with its agent's color</span></span></button></div>`;
+}
+
+function pickAgent(index) {
+  ui.agent = index;
+  ui.menu = false;
+  ui.pick = null;
+  renderBody();
+  dialog.querySelector("[data-s-agent-button]")?.focus({ preventScroll: true });
 }
 
 // ---------- Chart ----------
 // One bar per request in scope, in order: the prompt stacked as cache read, cache write and uncached input, the output
 // below the axis on its own scale. A line traces the running total of tokens processed. Dashed rules mark compactions;
-// triangles on top mark user messages, labels mark model and effort changes, and a red tick marks a failed call. A
-// picked finding lights up its requests and dims the rest.
+// triangles on top mark user messages, labels mark model and effort changes, and a red tick marks a failed call. An
+// idle stretch longer than the prompt cache breaks the bars with a hatched gap that names its length, and clock labels
+// sit on both sides of it. A picked finding lights up its requests and dims the rest.
 
 function drawChart() {
   const host = dialog.querySelector('[data-s="chart"]');
-  if (!host) return;
+  if (!host || chartMode() === "hidden") return;
   const { requests, messages, marks } = scope();
   const width = Math.max(320, host.clientWidth);
-  const height = 170;
-  const pad = { left: 44, right: 50, top: 18, bottom: 20 };
-  const outH = 28;
-  const inH = height - pad.top - pad.bottom - outH - 8;
+  const height = chartMode() === "wide" ? 200 : Math.max(96, (dialog.querySelector(".session-stats")?.offsetHeight || 150) - 28);
+  const pad = { left: 44, right: 50, top: 16, bottom: 16 };
+  const outH = chartMode() === "wide" ? 26 : 14;
+  const inH = height - pad.top - pad.bottom - outH - 6;
   const base = pad.top + inH;
   if (!requests.length) { host.innerHTML = `<p class="code-muted session-note">No model requests in this scope.</p>`; return; }
+  // Bars sit side by side in request order; an idle stretch longer than the prompt cache opens a hatched break. Breaks
+  // share at most a fifth of the plot, so a long session keeps its longest gaps as breaks and marks the rest with a tick.
   const plot = width - pad.left - pad.right;
-  const step = plot / requests.length;
+  const idle = requests.map((request, index) => index && request.t - requests[index - 1].t > IDLE ? index : 0).filter(Boolean);
+  const room = Math.floor(plot * 0.2 / 16);
+  const gaps = [...idle].sort((a, b) => (requests[b].t - requests[b - 1].t) - (requests[a].t - requests[a - 1].t)).slice(0, room).sort((a, b) => a - b);
+  const ticked = idle.filter((index) => !gaps.includes(index));
+  const gapW = gaps.length ? Math.min(40, plot * 0.2 / gaps.length) : 0;
+  const step = (plot - gaps.length * gapW) / requests.length;
   const bar = Math.max(1, Math.min(18, step - (step > 4 ? 1 : 0)));
+  const slot = (index) => pad.left + index * step + gaps.filter((gap) => gap <= index).length * gapW;
   const maxIn = Math.max(...requests.map((request) => request.input)) || 1;
   const maxOut = Math.max(...requests.map((request) => request.output)) || 1;
   const window = Math.max(0, ...requests.map((request) => request.window || 0));
   const top = Math.max(maxIn, window && window < maxIn * 1.6 ? window : 0);
   const y = (value) => base - (value / top) * inH;
-  const x = (index) => pad.left + index * step + (step - bar) / 2;
+  const x = (index) => slot(index) + (step - bar) / 2;
   let running = 0;
   const cumulative = requests.map((request) => (running += request.input + request.output));
   const yc = (value) => base - (value / (running || 1)) * inH;
   const at = (t) => { const index = requests.findIndex((request) => request.t >= t); return index < 0 ? requests.length : index; };
   const ticks = [0, 0.5, 1].map((share) => share * top);
-  const timeTicks = [...new Set([0, Math.floor(requests.length / 3), Math.floor(2 * requests.length / 3), requests.length - 1])];
   const picked = ui.pick?.startsWith("r") ? Number(ui.pick.slice(1)) : -1;
   const focus = focused();
   const hits = new Set(focus?.requests || []);
@@ -291,42 +401,69 @@ function drawChart() {
     }).join("");
     const out = (request.output / maxOut) * outH;
     const classes = [request.index === picked && "is-picked", ui.agent < 0 && request.agent && "is-sub", hits.has(request.index) && "is-hit"].filter(Boolean).join(" ");
-    const fail = failed.has(request.index) ? `<rect class="session-fail" x="${left}" y="${base + 8 + outH + 2}" width="${Math.max(bar, 2)}" height="3"/>` : "";
-    return `<g class="session-bar ${classes}" data-s-pick="r${request.index}"><rect class="session-hit" x="${pad.left + index * step}" y="${pad.top}" width="${Math.max(step, 1)}" height="${height - pad.top - pad.bottom}"/>${stack}<rect class="is-output" x="${left}" y="${base + 6}" width="${bar}" height="${Math.max(out, 0.5)}"/>${fail}</g>`;
+    const fail = failed.has(request.index) ? `<rect class="session-fail" x="${left}" y="${base + 6 + outH + 1}" width="${Math.max(bar, 2)}" height="3"/>` : "";
+    const who = ui.agent < 0 && request.agent ? `<rect class="session-who" x="${left}" y="${base + 1}" width="${bar}" height="2" style="fill:${agentColor(request.agent)}"/>` : "";
+    const said = request.text ? `\n${request.text.split("\n")[0].slice(0, 120)}` : "";
+    const tip = `#${index + 1} · ${clock(request.t)} · ${agentName(request.agent)} · ${modelName(request.model)}\nInput ${exact(request.input)} (${pct(request.cached, request.input)} cache read, ${exact(request.cacheWrite)} written)\nOutput ${exact(request.output)}${request.reasoning ? ` (${exact(request.reasoning)} reasoning)` : ""}${said}`;
+    return `<g class="session-bar ${classes}" data-s-pick="r${request.index}" data-tip="${escapeHtml(tip)}"><rect class="session-hit" x="${slot(index)}" y="${pad.top}" width="${Math.max(step, 1)}" height="${height - pad.top - pad.bottom}"/>${stack}${who}<rect class="is-output" x="${left}" y="${base + 6}" width="${bar}" height="${Math.max(out, 0.5)}"/>${fail}</g>`;
   }).join("");
-  const line = cumulative.map((value, index) => `${index ? "L" : "M"}${(x(index) + bar / 2).toFixed(1)},${yc(value).toFixed(1)}`).join("");
+  // The running total steps flat across a break, so the jump in time does not read as a jump in tokens.
+  const line = cumulative.map((value, index) => `${index ? (gaps.includes(index) ? `L${(slot(index) - gapW).toFixed(1)},${yc(cumulative[index - 1]).toFixed(1)}M${slot(index).toFixed(1)},${yc(cumulative[index - 1]).toFixed(1)}L` : "L") : "M"}${(x(index) + bar / 2).toFixed(1)},${yc(value).toFixed(1)}`).join("");
+  const breaks = gaps.map((index) => {
+    const left = slot(index) - gapW, idle = requests[index].t - requests[index - 1].t, next = requests[index];
+    const cold = next.input && next.cached / next.input < 0.5;
+    const tip = `Idle ${span(idle)}: ${clock(requests[index - 1].t)} → ${clock(next.t)}\n${cold ? `Longer than the prompt cache keeps a prompt, so the next request wrote ${exact(next.input - next.cached)} tokens again.` : "The prompt cache still held the context."}`;
+    const mid = left + gapW / 2;
+    return `<g class="session-break${cold ? " is-cold" : ""}" data-tip="${escapeHtml(tip)}"><rect x="${left + 2}" y="${pad.top - 2}" width="${gapW - 4}" height="${inH + outH + 10}" rx="3"/>
+      <path d="M${mid - 4},${base + 6}l3,-6M${mid + 1},${base + 6}l3,-6"/>${idleLabel(idle).length * 6 + 4 <= gapW ? `<text x="${mid}" y="${pad.top + inH / 2}" text-anchor="middle">${escapeHtml(idleLabel(idle))}</text>` : ""}</g>`;
+  }).join("") + ticked.map((index) => `<line class="session-idle-tick" x1="${slot(index)}" x2="${slot(index)}" y1="${base - 4}" y2="${base + 4}"/>`).join("");
   const compacts = marks.filter((mark) => mark.kind === "compact").map((mark) => {
-    const left = pad.left + at(mark.t) * step - 0.5;
+    const left = slot(at(mark.t)) - 0.5;
     const tip = `Compacted${mark.trigger ? ` (${mark.trigger})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""} at ${clock(mark.t)}`;
     return `<g class="session-compact" data-tip="${escapeHtml(tip)}"><line x1="${left}" x2="${left}" y1="${pad.top - 4}" y2="${base + 6 + outH}"/><rect x="${left - 5}" y="${pad.top - 6}" width="10" height="${inH + outH}" fill="transparent"/></g>`;
   });
   // A model change and an effort change at the same request share one label.
   const changes = [...Map.groupBy(marks.filter((mark) => mark.kind !== "compact"), (mark) => at(mark.t))].map(([index, group]) => {
-    const left = pad.left + index * step - 0.5;
+    const left = slot(index) - 0.5;
     const label = group.map((mark) => mark.kind === "model" ? modelName(mark.label) : mark.label).join(" · ");
     const tip = group.map((mark) => `${mark.kind === "model" ? "Model" : "Effort"} changed to ${mark.kind === "model" ? modelName(mark.label) : mark.label}`).join("\n") + ` at ${clock(group[0].t)}`;
     return `<g class="session-change" data-tip="${escapeHtml(tip)}"><line x1="${left}" x2="${left}" y1="${pad.top}" y2="${pad.top + 12}"/><text x="${left + 4}" y="${pad.top + 10}">${escapeHtml(label)}</text></g>`;
   });
+  // Your messages are triangles, or thin ticks when there are too many to tell apart.
+  const dense = messages.length * 10 > plot;
   const msgSvg = messages.map((message) => {
-    const left = pad.left + at(message.t) * step;
-    return `<path class="session-msg" d="M${left - 4},${pad.top - 12}h8l-4,6z" data-tip="${escapeHtml(`${clock(message.t)} · ${message.text.slice(0, 160)}`)}" data-s-pick="m${data.messages.indexOf(message)}"/>`;
+    const left = slot(at(message.t)) + Math.min(step, bar) / 2;
+    const tip = `data-tip="${escapeHtml(`${clock(message.t)} · ${messagePreview(message.text).slice(0, 160)}`)}" data-s-pick="m${data.messages.indexOf(message)}"`;
+    return dense ? `<rect class="session-msg is-tick" x="${left - 0.75}" y="${pad.top - 12}" width="1.5" height="7" ${tip}/>` : `<path class="session-msg" d="M${left - 4},${pad.top - 12}h8l-4,6z" ${tip}/>`;
   }).join("");
-  const windowLine = window && window <= top ? `<line class="session-window" x1="${pad.left}" x2="${width - pad.right}" y1="${y(window)}" y2="${y(window)}"/><text class="session-axis" x="${width - pad.right - 4}" y="${y(window) - 3}" text-anchor="end">context window ${num(window)}</text>` : "";
+  // Clock labels: the first and last request, both sides of every break, then more where they fit. A session longer
+  // than a day adds the date wherever it changes from the label to the left.
+  const days = requests.at(-1).t - requests[0].t > 20 * 3_600_000;
+  const day = (t) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
+  const wanted = [[0, "start"], [requests.length - 1, "end"], ...gaps.flatMap((index) => [[index, "start"], [index - 1, "end"]])];
+  for (let px = days ? 200 : 170; px < plot - 80; px += days ? 200 : 170) wanted.push([Math.min(requests.length - 1, Math.round(requests.findIndex((_, index) => slot(index) - pad.left >= px))), "middle"]);
+  const labels = [];
+  for (const [index, anchor] of wanted) {
+    if (index < 0 || labels.some((label) => label.index === index)) continue;
+    const text = days ? `${day(requests[index].t)} ${minute(requests[index].t)}` : minute(requests[index].t);
+    const cx = anchor === "start" ? slot(index) : anchor === "end" ? slot(index) + step : x(index) + bar / 2;
+    const w = text.length * 5.6;
+    const [from, to] = anchor === "start" ? [cx, cx + w] : anchor === "end" ? [cx - w, cx] : [cx - w / 2, cx + w / 2];
+    if (labels.some((label) => from < label.to + 8 && to > label.from - 8)) continue;
+    labels.push({ index, anchor, cx, from, to, text });
+  }
+  if (days) labels.sort((a, b) => a.cx - b.cx).forEach((label, position) => {
+    if (position && day(requests[labels[position - 1].index].t) === day(requests[label.index].t)) label.text = minute(requests[label.index].t);
+  });
+  const timeSvg = labels.map((label) => `<text class="session-axis is-time" x="${label.cx}" y="${height - 3}" text-anchor="${label.anchor}">${escapeHtml(label.text)}</text>`).join("");
+  const windowLine = window && window <= top ? `<line class="session-window" x1="${pad.left}" x2="${width - pad.right}" y1="${y(window)}" y2="${y(window)}"/><text class="session-axis" x="${pad.left + 4}" y="${y(window) + 10}">context window ${num(window)}</text>` : "";
   host.innerHTML = `<svg width="${width}" height="${height}" role="img" aria-label="Tokens per request"${hits.size ? ' class="is-focused"' : ""}>
     ${ticks.map((value) => `<line class="session-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${y(value)}" y2="${y(value)}"/><text class="session-axis" x="${pad.left - 6}" y="${y(value) + 3}" text-anchor="end">${num(value)}</text>`).join("")}
     <text class="session-axis" x="${pad.left - 6}" y="${base + 6 + outH / 2 + 3}" text-anchor="end">out</text>
-    ${windowLine}${bars}<path class="session-cumulative" d="${line}"/>
+    ${breaks}${windowLine}${bars}<path class="session-cumulative" d="${line}"/>
     <text class="session-axis is-cumulative" x="${width - pad.right + 6}" y="${yc(running) + 3}">${num(running)}</text>
     <text class="session-axis" x="${width - pad.right + 6}" y="${base + 6 + outH / 2 + 3}">${num(maxOut)}</text>
-    ${timeTicks.map((index) => `<text class="session-axis" x="${x(index) + bar / 2}" y="${height - 4}" text-anchor="middle">${escapeHtml(clock(requests[index].t))}</text>`).join("")}
-    ${compacts.join("")}${changes.join("")}${msgSvg}</svg>
-    <div class="session-legend"><span class="is-cached">Cache read</span><span class="is-write">Cache write</span><span class="is-fresh">Uncached input</span><span class="is-output">Output</span><span class="is-cumulative">Running total</span><span class="is-compact">Compaction</span><span class="is-msg">Your message</span><span class="is-fail">Failed call</span></div>`;
-  for (const group of host.querySelectorAll(".session-bar")) {
-    const index = Number(group.dataset.sPick.slice(1));
-    const request = data.requests[index];
-    const said = request.text ? `\n${request.text.split("\n")[0].slice(0, 120)}` : "";
-    group.dataset.tip = `#${requests.findIndex((item) => item.index === index) + 1} · ${clock(request.t)} · ${modelName(request.model)}\nInput ${exact(request.input)} (${pct(request.cached, request.input)} cache read, ${exact(request.cacheWrite)} written)\nOutput ${exact(request.output)}${request.reasoning ? ` (${exact(request.reasoning)} reasoning)` : ""}${said}`;
-  }
+    ${timeSvg}${compacts.join("")}${changes.join("")}${msgSvg}</svg>`;
 }
 
 // ---------- Tables ----------
@@ -365,36 +502,56 @@ function timelineTable({ requests, tools, messages, marks }) {
   const byRequest = Map.groupBy(tools, (tool) => tool.request);
   const showAgent = ui.agent < 0;
   const hits = new Set(focused()?.requests || []);
-  const width = showAgent ? 8 : 7;
+  const width = showAgent ? 9 : 8;
+  // A message that repeats an earlier turn's (an automation's prompt) shows as one muted line.
+  const seen = new Map();
+  const firstTurn = new Map(messages.map((message, turn) => [messagePreview(message.text), turn + 1]).reverse());
   const rows = [
     ...messages.map((message, turn) => {
+      if (firstTurn.get(messagePreview(message.text)) !== turn + 1) seen.set(messagePreview(message.text), firstTurn.get(messagePreview(message.text)));
+      else seen.delete(messagePreview(message.text));
       const index = data.messages.indexOf(message);
       if (!matches(message.text)) return { t: message.t, order: 0, html: "" };
       const stats = turnStats(message, messages, requests, tools);
       const facts = [plural(stats.requests.length, "request"), plural(stats.calls.length, "call"), stats.failed && `<em>${stats.failed} failed</em>`, span(stats.ms), stats.cost !== null && usd(stats.cost)].filter(Boolean).join(" · ");
-      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("message-square")}</td><td class="session-time">${clock(message.t)}</td><td colspan="${width - 2}"><span class="session-turn">Turn ${turn + 1} · ${facts}</span><span class="session-msg-text">${escapeHtml(message.text)}</span></td></tr>` };
+      // With only your messages showing, each turn also shows the agent's last word, so the list reads as the conversation.
+      const reply = ui.only && stats.requests.findLast((request) => request.text);
+      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time session-turn-time"><b class="session-turn-label">Turn ${turn + 1}</b>${clock(message.t)}</td><td colspan="${width - 2}"><div class="session-turn-line">${seen.has(messagePreview(message.text)) ? `<span class="session-msg-text is-repeat">${escapeHtml(messagePreview(message.text))}</span><small class="session-repeat">same as turn ${seen.get(messagePreview(message.text))}</small>` : `<span class="session-msg-text">${escapeHtml(messagePreview(message.text))}</span>`}<span class="session-turn">${facts}</span></div>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(messagePreview(home(reply.text), { named: false })))}</span>` : ""}</td></tr>` };
     }),
+    ...(ui.only ? [] : [
     ...marks.map((mark) => ({ t: mark.t, order: 1, html: `<tr class="session-mark-row is-${mark.kind}"><td class="session-num">${glyph(mark.kind === "compact" ? "layers" : "settings")}</td><td class="session-time">${clock(mark.t)}</td><td colspan="${width - 2}">${mark.kind === "compact" ? `Context compacted${mark.trigger ? ` (${escapeHtml(mark.trigger)})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""}` : `${mark.kind === "model" ? "Model" : "Effort"} changed to <b>${escapeHtml(mark.kind === "model" ? modelName(mark.label) : mark.label)}</b>`}</td></tr>` })),
+    // An idle stretch longer than the prompt cache, between two requests in scope.
+    ...requests.slice(1).map((request, position) => {
+      const prior = requests[position], idle = request.t - prior.t;
+      const cold = request.input && request.cached / request.input < 0.5;
+      // A gap the cache rode out is worth a row only when it is long; an expired cache always is.
+      if (idle <= IDLE || (!cold && idle < 30 * 60_000) || ui.find.trim()) return null;
+      return { t: prior.t + 1, order: 3, html: `<tr class="session-gap-row${cold ? " is-cold" : ""}"><td class="session-num">${glyph("hourglass")}</td><td class="session-time">${minute(prior.t)}</td><td colspan="${width - 2}"><b>${span(idle)} idle</b>${cold ? ` · the prompt cache expired, so the next request wrote ${num(request.input - request.cached)} tokens again` : " · the prompt cache held"}</td></tr>` };
+    }).filter(Boolean),
     ...requests.map((request, position) => {
       const own = byRequest.get(request.index) || [];
       if (!matches(request.model, request.text, ...own.flatMap((tool) => [tool.name, tool.args]))) return { t: request.t, order: 2, html: "" };
       const names = [...Map.groupBy(own, (tool) => tool.name)].map(([name, calls]) => {
         const failed = calls.filter((tool) => tool.error).length;
-        return `<span class="session-chip${failed ? " is-error" : ""}">${escapeHtml(name)}${calls.length > 1 ? `<i>×${calls.length}</i>` : ""}${failed ? glyph("triangle-alert") : ""}</span>`;
+        const { kind, icon } = toolKind(name);
+        const hints = [...new Set(calls.map(callHint).filter(Boolean))];
+        const hint = hints.length ? `<code>${escapeHtml(home(hints.slice(0, 2).join(", ")).slice(0, 60))}${hints.length > 2 ? ` +${hints.length - 2}` : ""}</code>` : "";
+        return `<span class="session-chip is-${kind}${failed ? " is-error" : ""}"${name.startsWith("mcp__") ? ` data-tip="${escapeHtml(name)}"` : ""}>${glyph(failed ? "triangle-alert" : icon)}<b>${escapeHtml(toolLabel(name))}</b>${calls.length > 1 ? `<i>×${calls.length}</i>` : ""}${hint}</span>`;
       }).join("");
       const pinned = own.some((tool) => noted(tool).length) ? `<span class="session-chip is-note" data-tip="You left a note here">${glyph("pen-line")}</span>` : "";
       const fresh = request.input - request.cached;
-      return { t: request.t, order: 2, html: `<tr class="code-row session-req${ui.pick === `r${request.index}` ? " is-picked" : ""}${hits.has(request.index) ? " is-hit" : ""}" data-s-pick="r${request.index}" tabindex="0">
-        <td class="session-num">${position + 1}</td><td class="session-time" data-tip="${escapeHtml(`${new Date(request.t).toLocaleString()} · ${modelName(request.model)}${request.effort ? ` · ${request.effort}` : ""}`)}">${clock(request.t)}</td>
-        ${showAgent ? `<td class="session-agent-cell">${escapeHtml(request.agent ? data.agents[request.agent].label : "Main")}</td>` : ""}
-        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(request.text.replace(/\s+/g, " "))}</span>` : ""}<span class="session-tools">${names}${pinned}</span></td>
-        <td class="session-n">${num(request.input)}</td>
-        <td class="session-n${request.input && request.cached / request.input < 0.5 ? " is-warn" : ""}">${pct(request.cached, request.input)}</td>
-        <td class="session-n" data-tip="${exact(fresh)} tokens not read from cache">${num(fresh)}</td>
-        <td class="session-n">${num(request.output)}</td></tr>` };
-    }),
+      const cache = request.input ? request.cached / request.input : 1;
+      return { t: request.t, order: 2, html: `<tr class="code-row session-req${request.text ? " has-text" : ""}${ui.pick === `r${request.index}` ? " is-picked" : ""}${hits.has(request.index) ? " is-hit" : ""}" data-s-pick="r${request.index}" tabindex="0">
+        <td class="session-num">${position + 1}</td><td class="session-time" data-tip="${escapeHtml(`${new Date(request.t).toLocaleString()} · ${modelName(request.model)}${request.effort ? ` · ${request.effort}` : ""}`)}">${short(request.t)}</td>
+        ${showAgent ? `<td class="session-agent-cell" style="--a:${agentColor(request.agent)}">${agentDot(request.agent)}${escapeHtml(request.agent ? data.agents[request.agent].label : "Main")}</td>` : ""}
+        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(plain(messagePreview(request.text, { named: false })))}</span>` : ""}</td><td class="session-did"><span class="session-tools">${names}${pinned}</span></td>
+        <td class="session-n is-context">${num(request.input)}</td>
+        <td class="session-n${cache < 0.5 ? " is-warn" : " is-soft"}">${pct(request.cached, request.input)}</td>
+        <td class="session-n${fresh >= 20_000 ? " is-heavy" : " is-soft"}" data-tip="${exact(fresh)} tokens not read from cache">${num(fresh)}</td>
+        <td class="session-n is-soft">${num(request.output)}</td></tr>` };
+    })]),
   ].sort((a, b) => a.t - b.t || a.order - b.order).map((row) => row.html).join("");
-  return `<table class="code-table session-table"><thead><tr><th class="session-num">#</th><th>Time</th>${showAgent ? "<th>Agent</th>" : ""}<th>What the agent said and did</th><th class="session-n" data-tip="Prompt tokens: the context this request read">Context</th><th class="session-n" data-tip="Share of the prompt read from cache">Cache</th><th class="session-n" data-tip="Prompt tokens not read from cache">New</th><th class="session-n">Output</th></tr></thead><tbody>${rows || `<tr><td colspan="${width}" class="session-note">Nothing matches.</td></tr>`}</tbody></table>`;
+  return `<table class="code-table session-table session-timeline"><thead><tr><th class="session-num">#</th><th>Time</th>${showAgent ? '<th class="session-agent-head">Agent</th>' : ""}<th>Said</th><th class="session-did-head">Did</th><th class="session-n" data-tip="Prompt tokens: the context this request read">Context</th><th class="session-n" data-tip="Share of the prompt read from cache">Cache</th><th class="session-n" data-tip="Prompt tokens not read from cache">New</th><th class="session-n">Output</th></tr></thead><tbody>${rows || `<tr><td colspan="${width}" class="session-note">Nothing matches.</td></tr>`}</tbody></table>`;
 }
 
 function toolStats(tools) {
@@ -480,7 +637,7 @@ const pathLine = (path, extra = "") => `<p class="session-path-line">${glyph("fi
 function callBody(tool) {
   const args = parseArgs(tool);
   const shell = command(tool);
-  if (shell) return `${fence(shell, "bash")}${args?.description ? `<p class="session-label">${escapeHtml(args.description)}</p>` : ""}`;
+  if (shell) return `${args?.description ? `<p class="session-shell-why">${escapeHtml(args.description)}</p>` : ""}<pre class="session-shell is-block">${shellHtml(shellLines(home(shell)))}</pre>`;
   if (!args) return tool.args.includes("*** Begin Patch") ? fence(tool.args.replace(/^\*\*\* (?:Begin|End) Patch\n?/gm, ""), "diff") : fence(tool.args);
   if (typeof args.input === "string" && args.input.includes("*** Begin Patch")) return fence(args.input.replace(/^\*\*\* (?:Begin|End) Patch\n?/gm, ""), "diff");
   if (/^(?:Edit|MultiEdit)$/.test(tool.name)) {
@@ -510,13 +667,38 @@ function toolBlock(tool) {
 }
 
 // One line per call, for lists in the inspector; a click shows the call's request in the timeline.
+// Each call: its time, then the tool (in lists of several tools) above what it ran, cut to two lines with More to read
+// the rest, then its duration.
 function callRows(calls, { name = true } = {}) {
-  return `<table class="session-calls"><tbody>${calls.map((tool) => `<tr class="code-row${tool.error ? " is-error" : ""}" data-s-goto="${tool.request}" data-s-call="${data.tools.indexOf(tool)}" tabindex="0" data-tip="Show this call in the timeline"><td class="session-time">${clock(tool.t)}</td>${name ? `<td>${escapeHtml(tool.name)}</td>` : ""}<td class="session-args">${escapeHtml(argSummary(tool))}</td><td class="session-n">${span(tool.dur)}</td><td class="session-n">${tool.error ? glyph("triangle-alert") : noted(tool).length ? glyph("pen-line") : ""}</td></tr>`).join("")}</tbody></table>`;
+  return `<div class="session-calls">${calls.map((tool) => {
+    const { kind, icon } = toolKind(tool.name);
+    // A leading `cd` becomes "in <folder>" in the header, so both preview lines show what ran.
+    const shell = command(tool) ? home(command(tool)) : "";
+    const cd = /^\s*cd\s+("[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/.exec(shell);
+    const folder = cd ? cd[1].replace(/^["']|["']$/g, "") : "";
+    const body = shell ? `<code class="session-shell">${shellHtml(shellLines(cd ? shell.slice(cd[0].length) : shell))}</code>` : `<span class="session-args">${escapeHtml(argSummary(tool))}</span>`;
+    const chip = name ? `<span class="session-chip is-${kind}${tool.error ? " is-error" : ""}"${tool.name.startsWith("mcp__") ? ` data-tip="${escapeHtml(tool.name)}"` : ""}>${glyph(tool.error ? "triangle-alert" : icon)}<b>${escapeHtml(toolLabel(tool.name))}</b></span>` : "";
+    const place = folder ? `<span class="session-call-folder" data-tip="${escapeHtml(`cd ${folder}`)}">in ${escapeHtml(folder.replace(/\/$/, "").split("/").at(-1))}</span>` : "";
+    return `<div class="code-row session-call-row${tool.error ? " is-error" : ""}" data-s-goto="${tool.request}" data-s-call="${data.tools.indexOf(tool)}" tabindex="0">
+      <span class="session-time">${clock(tool.t)}</span>
+      <div class="session-call-main">${chip || place ? `<div class="session-call-head">${chip}${place}</div>` : ""}${clamp(body, 2)}</div>
+      <span class="session-call-side">${tool.error && !name ? glyph("triangle-alert", "code-icon is-error") : ""}${noted(tool).length ? glyph("pen-line", "code-icon is-note") : ""}${span(tool.dur)}</span></div>`;
+  }).join("")}</div>`;
+}
+
+// Long text shows its first lines; More (shown only when the text is cut) opens the rest in place.
+const clamp = (html, lines) => `<div class="session-clamp" style="--lines:${lines}"><div class="session-clamp-body">${html}</div><button type="button" class="session-more" data-s-more hidden>More</button></div>`;
+function markClamps(root) {
+  for (const box of root.querySelectorAll(".session-clamp:not(.is-open)")) {
+    const body = box.firstElementChild;
+    box.querySelector("[data-s-more]").hidden = body.scrollHeight <= body.clientHeight + 1;
+  }
 }
 
 function inspector(view) {
   const first = { findings: view.findings[0] && `x:${view.findings[0].id}`, tools: toolStats(view.tools)[0] && `t:${toolStats(view.tools)[0].name}`,
-    files: fileRows(view.tools)[0] && `f:${fileRows(view.tools)[0].path}`, notes: notes[0] && `n:${notes[0].id}` }[ui.tab];
+    files: fileRows(view.tools)[0] && `f:${fileRows(view.tools)[0].path}`, notes: notes[0] && `n:${notes[0].id}`,
+    timeline: ui.only && view.messages[0] ? `m${data.messages.indexOf(view.messages[0])}` : "" }[ui.tab];
   const pick = ui.pick || first || (view.requests[0] ? `r${view.requests[0].index}` : "");
   if (pick.startsWith("x:")) {
     const finding = found.find((item) => item.id === pick.slice(2));
@@ -524,7 +706,7 @@ function inspector(view) {
     const calls = finding.calls.map((index) => data.tools[index]);
     const requests = finding.calls.length ? [] : finding.requests.map((index) => data.requests[index]);
     return `<h4>${glyph(SEVERITY_ICON[finding.severity], `code-icon is-${finding.severity}`)}${escapeHtml(finding.title)}</h4>
-      <p>${escapeHtml(home(finding.detail))}</p>
+      ${clamp(`<p>${escapeHtml(home(finding.detail))}</p>`, 4)}
       <dl class="session-facts">${[["Agent", agentName(finding.agent)], ["Impact", finding.tokens ? `about ${exact(finding.tokens)} tokens` : finding.ms ? span(finding.ms) : "—"], ...(finding.cost ? [["Cost", usd(finding.cost)]] : [])].map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>
       <div class="session-advice">${escapeHtml(ADVICE[finding.kind] || "")}</div>
       <p class="session-label">${calls.length ? plural(calls.length, "call") : plural(requests.length, "request")} · lit up on the chart</p>
@@ -585,7 +767,26 @@ function inspector(view) {
 function onClick(event) {
   if (event.target === dialog) return;
   if (event.target.closest("[data-s-close]")) return dialog.close();
+  const more = event.target.closest("[data-s-more]");
+  if (more) {
+    const box = more.closest(".session-clamp");
+    box.classList.toggle("is-open");
+    more.textContent = box.classList.contains("is-open") ? "Less" : "More";
+    return;
+  }
   if (event.target.closest("[data-s-review]")) return review(event.target.closest("[data-s-review]"));
+  const size = event.target.closest("[data-s-chart]");
+  if (size) {
+    setChartMode(size.dataset.sChart);
+    dialog.querySelector('[data-s="top"]').dataset.chart = size.dataset.sChart;
+    hideTip();
+    return drawChart();
+  }
+  if (event.target.closest("[data-s-only]")) { ui.only = !ui.only; ui.pick = null; return renderBody(); }
+  const agentPick = event.target.closest("[data-s-agent-pick]");
+  if (agentPick) return pickAgent(Number(agentPick.dataset.sAgentPick));
+  if (event.target.closest("[data-s-agent-button]")) return setMenu(!ui.menu);
+  if (ui.menu && !event.target.closest(".session-agent-menu")) setMenu(false);
   const note = event.target.closest("[data-s-note]");
   if (note) return addNote(note, data.tools[Number(note.dataset.sNote)]);
   if (event.target.closest("[data-s-note-session]")) return addNote(event.target.closest("[data-s-note-session]"), null);
@@ -613,9 +814,44 @@ function onClick(event) {
   if (pick) {
     ui.pick = pick.dataset.sPick;
     if (ui.pick.startsWith("x:")) ui.focus = ui.pick.slice(2);
-    if (pick.closest('[data-s="chart"]')) { ui.tab = "timeline"; renderBody(); return reveal(); }
-    renderBody();
+    if (pick.closest('[data-s="chart"]')) {
+      if (ui.tab === "timeline" && repick()) return reveal();
+      ui.tab = "timeline"; renderBody(); return reveal();
+    }
+    if (!repick()) renderBody();
   }
+}
+
+function setMenu(open) {
+  ui.menu = open;
+  const picker = dialog.querySelector('[data-s="agent"]');
+  if (!picker) return;
+  picker.innerHTML = agentPicker();
+  if (open) (picker.querySelector('[aria-selected="true"]') || picker.querySelector("[data-s-agent-pick]"))?.focus({ preventScroll: true });
+  else picker.querySelector("[data-s-agent-button]")?.focus({ preventScroll: true });
+}
+
+// A new selection in the same list: move the highlight and redraw the inspector and chart, without rebuilding a list
+// that can hold thousands of rows. False when the row is not on screen, so the caller renders in full.
+function repick() {
+  const list = dialog.querySelector('[data-s="list"]');
+  const row = list.querySelector(`[data-s-pick="${CSS.escape(ui.pick)}"]`);
+  if (!row) return false;
+  for (const old of list.querySelectorAll(".is-picked")) old.classList.remove("is-picked");
+  row.classList.add("is-picked");
+  setOverlayParams({ "session-pick": ui.pick });
+  const inspect = dialog.querySelector('[data-s="inspector"]');
+  inspect.innerHTML = inspector(scope());
+  inspect.scrollTop = 0;
+  markClamps(inspect);
+  // Only a finding changes what the chart lights up; any other pick just moves the picked bar.
+  if (ui.pick.startsWith("x:")) drawChart();
+  else {
+    const chart = dialog.querySelector('[data-s="chart"]');
+    chart.querySelector(".session-bar.is-picked")?.classList.remove("is-picked");
+    chart.querySelector(`.session-bar[data-s-pick="${CSS.escape(ui.pick)}"]`)?.classList.add("is-picked");
+  }
+  return true;
 }
 
 function reveal() {
@@ -654,6 +890,19 @@ function review(anchor) {
 
 // Up and Down move between rows; / focuses the filter; N notes the first call of the picked request.
 function onKey(event) {
+  if (ui.menu) {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); return setMenu(false); }
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const options = [...dialog.querySelectorAll("[data-s-agent-pick]")];
+      const current = options.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : Math.max(0, Math.min(options.length - 1, current + (event.key === "ArrowDown" ? 1 : -1)));
+      options[next]?.focus({ preventScroll: true });
+      return;
+    }
+    if (event.key === "Tab") setMenu(false);
+    return;
+  }
   if (event.target.matches("input, select, textarea")) return;
   if (event.key === "/") { event.preventDefault(); dialog.querySelector("[data-s-find]")?.focus(); return; }
   if (event.key === "n" && !event.metaKey && !event.ctrlKey && ui.pick?.startsWith("r")) {
@@ -670,7 +919,7 @@ function onKey(event) {
   if (next.dataset.sAgentRow) { next.focus(); return; }
   ui.pick = next.dataset.sPick;
   if (ui.pick.startsWith("x:")) ui.focus = ui.pick.slice(2);
-  renderBody();
+  if (!repick()) renderBody();
   const row = dialog.querySelector('[data-s="list"] .is-picked');
   row?.focus({ preventScroll: true });
   row?.scrollIntoView({ block: "nearest" });
