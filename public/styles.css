@@ -4210,8 +4210,10 @@ div.session-calls { display: grid; }
 .session-timeline tr.session-req:not(.has-text) .session-step { padding: 0; }
 .session-timeline td.session-n { width: 1%; font-size: .74rem; }
 .session-timeline td.session-time { font-size: .72rem; }
-.session-turn-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 10px; }
-.session-turn-label { color: var(--action-ink, #3157d5); font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.session-turn-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 10px; }
+.session-turn-time { vertical-align: top; }
+.session-turn-label { display: block; color: var(--action-ink, #3157d5); font-size: .7rem; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.session-msg-row td.session-num { vertical-align: top; padding-top: 8px; }
 .session-turn-line .session-msg-text { margin: 0; font-size: .84rem; -webkit-line-clamp: 2; }
 .session-turn-line .session-turn { white-space: nowrap; }
 .session-msg-row td { padding-block: 6px; }
