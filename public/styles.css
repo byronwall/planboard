@@ -4221,3 +4221,8 @@ div.session-calls { display: grid; }
 .session-timeline .session-agent-cell { max-width: 120px; font-size: .72rem; }
 .session-timeline td.session-n { padding-inline: 4px; }
 .session-timeline thead th { padding-inline: 4px; }
+.session-idle-tick { stroke: #c9ced8; stroke-width: 1; pointer-events: none; }
+.session-msg.is-tick { fill: var(--body-ink); opacity: .55; }
+.session-msg-text.is-repeat { -webkit-line-clamp: 1; color: var(--body-ink); font-weight: 400; }
+.session-turn-line:has(.is-repeat) { grid-template-columns: minmax(0, 1fr) auto auto; }
+.session-repeat { color: var(--quiet-text); font-size: .7rem; white-space: nowrap; }

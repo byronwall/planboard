@@ -90,6 +90,19 @@ function argSummary(tool) {
 }
 // Markdown read as one line of plain text, for previews: no emphasis marks, code ticks or link targets.
 const plain = (text) => String(text ?? "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/(\*\*|__|`|^#+\s*|^\s*[-*]\s+)/gm, "").replace(/\s+/g, " ").trim();
+// A message for a one- or two-line preview. Automation runs arrive as tagged text (`<heartbeat><automation_id>…`): your
+// side reads as "Automation · <id>" and its instructions, the agent's reply as its decision and message. Other tags are
+// dropped. `named: false` leaves out the automation's name, which every row of such a session repeats.
+function messagePreview(text, { named = true } = {}) {
+  const value = String(text ?? "");
+  const tag = (name) => new RegExp(`<${name}>([\\s\\S]*?)(?:</${name}>|$)`).exec(value)?.[1]?.trim();
+  const id = tag("automation_id");
+  if (!id) return value.replace(/<\/?[\w:-]+>/g, " ").replace(/\s+/g, " ").trim();
+  const decision = tag("decision");
+  const body = (tag("message") ?? tag("instructions") ?? "").replace(/<\/?[\w:-]+>/g, " ").replace(/\s+/g, " ").trim();
+  const said = decision ? `${/DONT|NO/i.test(decision) ? "Quiet" : "Notified"}: ${body}` : body;
+  return named ? `Automation · ${id}${said ? ` — ${said}` : ""}` : said;
+}
 const relative = (path) => { const root = data?.cwd ? `${data.cwd.replace(/\/$/, "")}/` : ""; return root && path.startsWith(root) ? path.slice(root.length) : home(path); };
 
 let dialog = null;
@@ -349,10 +362,14 @@ function drawChart() {
   const inH = height - pad.top - pad.bottom - outH - 6;
   const base = pad.top + inH;
   if (!requests.length) { host.innerHTML = `<p class="code-muted session-note">No model requests in this scope.</p>`; return; }
-  // Bars sit side by side in request order; an idle stretch longer than the prompt cache opens a hatched break.
-  const gaps = requests.map((request, index) => index && request.t - requests[index - 1].t > IDLE ? index : 0).filter(Boolean);
+  // Bars sit side by side in request order; an idle stretch longer than the prompt cache opens a hatched break. Breaks
+  // share at most a fifth of the plot, so a long session keeps its longest gaps as breaks and marks the rest with a tick.
   const plot = width - pad.left - pad.right;
-  const gapW = gaps.length ? Math.min(40, Math.max(22, plot * 0.04)) : 0;
+  const idle = requests.map((request, index) => index && request.t - requests[index - 1].t > IDLE ? index : 0).filter(Boolean);
+  const room = Math.floor(plot * 0.2 / 16);
+  const gaps = [...idle].sort((a, b) => (requests[b].t - requests[b - 1].t) - (requests[a].t - requests[a - 1].t)).slice(0, room).sort((a, b) => a - b);
+  const ticked = idle.filter((index) => !gaps.includes(index));
+  const gapW = gaps.length ? Math.min(40, plot * 0.2 / gaps.length) : 0;
   const step = (plot - gaps.length * gapW) / requests.length;
   const bar = Math.max(1, Math.min(18, step - (step > 4 ? 1 : 0)));
   const slot = (index) => pad.left + index * step + gaps.filter((gap) => gap <= index).length * gapW;
@@ -386,7 +403,9 @@ function drawChart() {
     const classes = [request.index === picked && "is-picked", ui.agent < 0 && request.agent && "is-sub", hits.has(request.index) && "is-hit"].filter(Boolean).join(" ");
     const fail = failed.has(request.index) ? `<rect class="session-fail" x="${left}" y="${base + 6 + outH + 1}" width="${Math.max(bar, 2)}" height="3"/>` : "";
     const who = ui.agent < 0 && request.agent ? `<rect class="session-who" x="${left}" y="${base + 1}" width="${bar}" height="2" style="fill:${agentColor(request.agent)}"/>` : "";
-    return `<g class="session-bar ${classes}" data-s-pick="r${request.index}"><rect class="session-hit" x="${slot(index)}" y="${pad.top}" width="${Math.max(step, 1)}" height="${height - pad.top - pad.bottom}"/>${stack}${who}<rect class="is-output" x="${left}" y="${base + 6}" width="${bar}" height="${Math.max(out, 0.5)}"/>${fail}</g>`;
+    const said = request.text ? `\n${request.text.split("\n")[0].slice(0, 120)}` : "";
+    const tip = `#${index + 1} · ${clock(request.t)} · ${agentName(request.agent)} · ${modelName(request.model)}\nInput ${exact(request.input)} (${pct(request.cached, request.input)} cache read, ${exact(request.cacheWrite)} written)\nOutput ${exact(request.output)}${request.reasoning ? ` (${exact(request.reasoning)} reasoning)` : ""}${said}`;
+    return `<g class="session-bar ${classes}" data-s-pick="r${request.index}" data-tip="${escapeHtml(tip)}"><rect class="session-hit" x="${slot(index)}" y="${pad.top}" width="${Math.max(step, 1)}" height="${height - pad.top - pad.bottom}"/>${stack}${who}<rect class="is-output" x="${left}" y="${base + 6}" width="${bar}" height="${Math.max(out, 0.5)}"/>${fail}</g>`;
   }).join("");
   // The running total steps flat across a break, so the jump in time does not read as a jump in tokens.
   const line = cumulative.map((value, index) => `${index ? (gaps.includes(index) ? `L${(slot(index) - gapW).toFixed(1)},${yc(cumulative[index - 1]).toFixed(1)}M${slot(index).toFixed(1)},${yc(cumulative[index - 1]).toFixed(1)}L` : "L") : "M"}${(x(index) + bar / 2).toFixed(1)},${yc(value).toFixed(1)}`).join("");
@@ -396,8 +415,8 @@ function drawChart() {
     const tip = `Idle ${span(idle)}: ${clock(requests[index - 1].t)} → ${clock(next.t)}\n${cold ? `Longer than the prompt cache keeps a prompt, so the next request wrote ${exact(next.input - next.cached)} tokens again.` : "The prompt cache still held the context."}`;
     const mid = left + gapW / 2;
     return `<g class="session-break${cold ? " is-cold" : ""}" data-tip="${escapeHtml(tip)}"><rect x="${left + 2}" y="${pad.top - 2}" width="${gapW - 4}" height="${inH + outH + 10}" rx="3"/>
-      <path d="M${mid - 4},${base + 6}l3,-6M${mid + 1},${base + 6}l3,-6"/><text x="${mid}" y="${pad.top + inH / 2}" text-anchor="middle">${escapeHtml(idleLabel(idle))}</text></g>`;
-  }).join("");
+      <path d="M${mid - 4},${base + 6}l3,-6M${mid + 1},${base + 6}l3,-6"/>${idleLabel(idle).length * 6 + 4 <= gapW ? `<text x="${mid}" y="${pad.top + inH / 2}" text-anchor="middle">${escapeHtml(idleLabel(idle))}</text>` : ""}</g>`;
+  }).join("") + ticked.map((index) => `<line class="session-idle-tick" x1="${slot(index)}" x2="${slot(index)}" y1="${base - 4}" y2="${base + 4}"/>`).join("");
   const compacts = marks.filter((mark) => mark.kind === "compact").map((mark) => {
     const left = slot(at(mark.t)) - 0.5;
     const tip = `Compacted${mark.trigger ? ` (${mark.trigger})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""} at ${clock(mark.t)}`;
@@ -410,25 +429,34 @@ function drawChart() {
     const tip = group.map((mark) => `${mark.kind === "model" ? "Model" : "Effort"} changed to ${mark.kind === "model" ? modelName(mark.label) : mark.label}`).join("\n") + ` at ${clock(group[0].t)}`;
     return `<g class="session-change" data-tip="${escapeHtml(tip)}"><line x1="${left}" x2="${left}" y1="${pad.top}" y2="${pad.top + 12}"/><text x="${left + 4}" y="${pad.top + 10}">${escapeHtml(label)}</text></g>`;
   });
+  // Your messages are triangles, or thin ticks when there are too many to tell apart.
+  const dense = messages.length * 10 > plot;
   const msgSvg = messages.map((message) => {
     const left = slot(at(message.t)) + Math.min(step, bar) / 2;
-    return `<path class="session-msg" d="M${left - 4},${pad.top - 12}h8l-4,6z" data-tip="${escapeHtml(`${clock(message.t)} · ${message.text.slice(0, 160)}`)}" data-s-pick="m${data.messages.indexOf(message)}"/>`;
+    const tip = `data-tip="${escapeHtml(`${clock(message.t)} · ${messagePreview(message.text).slice(0, 160)}`)}" data-s-pick="m${data.messages.indexOf(message)}"`;
+    return dense ? `<rect class="session-msg is-tick" x="${left - 0.75}" y="${pad.top - 12}" width="1.5" height="7" ${tip}/>` : `<path class="session-msg" d="M${left - 4},${pad.top - 12}h8l-4,6z" ${tip}/>`;
   }).join("");
-  // Clock labels: the first and last request, both sides of every break, then more where they fit.
+  // Clock labels: the first and last request, both sides of every break, then more where they fit. A session longer
+  // than a day adds the date wherever it changes from the label to the left.
+  const days = requests.at(-1).t - requests[0].t > 20 * 3_600_000;
+  const day = (t) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
   const wanted = [[0, "start"], [requests.length - 1, "end"], ...gaps.flatMap((index) => [[index, "start"], [index - 1, "end"]])];
-  for (let px = 170; px < plot - 80; px += 170) wanted.push([Math.min(requests.length - 1, Math.round(requests.findIndex((_, index) => slot(index) - pad.left >= px))), "middle"]);
+  for (let px = days ? 200 : 170; px < plot - 80; px += days ? 200 : 170) wanted.push([Math.min(requests.length - 1, Math.round(requests.findIndex((_, index) => slot(index) - pad.left >= px))), "middle"]);
   const labels = [];
   for (const [index, anchor] of wanted) {
     if (index < 0 || labels.some((label) => label.index === index)) continue;
-    const text = minute(requests[index].t);
+    const text = days ? `${day(requests[index].t)} ${minute(requests[index].t)}` : minute(requests[index].t);
     const cx = anchor === "start" ? slot(index) : anchor === "end" ? slot(index) + step : x(index) + bar / 2;
     const w = text.length * 5.6;
     const [from, to] = anchor === "start" ? [cx, cx + w] : anchor === "end" ? [cx - w, cx] : [cx - w / 2, cx + w / 2];
     if (labels.some((label) => from < label.to + 8 && to > label.from - 8)) continue;
     labels.push({ index, anchor, cx, from, to, text });
   }
+  if (days) labels.sort((a, b) => a.cx - b.cx).forEach((label, position) => {
+    if (position && day(requests[labels[position - 1].index].t) === day(requests[label.index].t)) label.text = minute(requests[label.index].t);
+  });
   const timeSvg = labels.map((label) => `<text class="session-axis is-time" x="${label.cx}" y="${height - 3}" text-anchor="${label.anchor}">${escapeHtml(label.text)}</text>`).join("");
-  const windowLine = window && window <= top ? `<line class="session-window" x1="${pad.left}" x2="${width - pad.right}" y1="${y(window)}" y2="${y(window)}"/><text class="session-axis" x="${width - pad.right - 4}" y="${y(window) - 3}" text-anchor="end">context window ${num(window)}</text>` : "";
+  const windowLine = window && window <= top ? `<line class="session-window" x1="${pad.left}" x2="${width - pad.right}" y1="${y(window)}" y2="${y(window)}"/><text class="session-axis" x="${pad.left + 4}" y="${y(window) + 10}">context window ${num(window)}</text>` : "";
   host.innerHTML = `<svg width="${width}" height="${height}" role="img" aria-label="Tokens per request"${hits.size ? ' class="is-focused"' : ""}>
     ${ticks.map((value) => `<line class="session-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${y(value)}" y2="${y(value)}"/><text class="session-axis" x="${pad.left - 6}" y="${y(value) + 3}" text-anchor="end">${num(value)}</text>`).join("")}
     <text class="session-axis" x="${pad.left - 6}" y="${base + 6 + outH / 2 + 3}" text-anchor="end">out</text>
@@ -436,12 +464,6 @@ function drawChart() {
     <text class="session-axis is-cumulative" x="${width - pad.right + 6}" y="${yc(running) + 3}">${num(running)}</text>
     <text class="session-axis" x="${width - pad.right + 6}" y="${base + 6 + outH / 2 + 3}">${num(maxOut)}</text>
     ${timeSvg}${compacts.join("")}${changes.join("")}${msgSvg}</svg>`;
-  for (const group of host.querySelectorAll(".session-bar")) {
-    const index = Number(group.dataset.sPick.slice(1));
-    const request = data.requests[index];
-    const said = request.text ? `\n${request.text.split("\n")[0].slice(0, 120)}` : "";
-    group.dataset.tip = `#${requests.findIndex((item) => item.index === index) + 1} · ${clock(request.t)} · ${agentName(request.agent)} · ${modelName(request.model)}\nInput ${exact(request.input)} (${pct(request.cached, request.input)} cache read, ${exact(request.cacheWrite)} written)\nOutput ${exact(request.output)}${request.reasoning ? ` (${exact(request.reasoning)} reasoning)` : ""}${said}`;
-  }
 }
 
 // ---------- Tables ----------
@@ -481,23 +503,29 @@ function timelineTable({ requests, tools, messages, marks }) {
   const showAgent = ui.agent < 0;
   const hits = new Set(focused()?.requests || []);
   const width = showAgent ? 9 : 8;
+  // A message that repeats an earlier turn's (an automation's prompt) shows as one muted line.
+  const seen = new Map();
+  const firstTurn = new Map(messages.map((message, turn) => [messagePreview(message.text), turn + 1]).reverse());
   const rows = [
     ...messages.map((message, turn) => {
+      if (firstTurn.get(messagePreview(message.text)) !== turn + 1) seen.set(messagePreview(message.text), firstTurn.get(messagePreview(message.text)));
+      else seen.delete(messagePreview(message.text));
       const index = data.messages.indexOf(message);
       if (!matches(message.text)) return { t: message.t, order: 0, html: "" };
       const stats = turnStats(message, messages, requests, tools);
       const facts = [plural(stats.requests.length, "request"), plural(stats.calls.length, "call"), stats.failed && `<em>${stats.failed} failed</em>`, span(stats.ms), stats.cost !== null && usd(stats.cost)].filter(Boolean).join(" · ");
       // With only your messages showing, each turn also shows the agent's last word, so the list reads as the conversation.
       const reply = ui.only && stats.requests.findLast((request) => request.text);
-      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time session-turn-time"><b class="session-turn-label">Turn ${turn + 1}</b>${clock(message.t)}</td><td colspan="${width - 2}"><div class="session-turn-line"><span class="session-msg-text">${escapeHtml(message.text)}</span><span class="session-turn">${facts}</span></div>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(home(reply.text)))}</span>` : ""}</td></tr>` };
+      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time session-turn-time"><b class="session-turn-label">Turn ${turn + 1}</b>${clock(message.t)}</td><td colspan="${width - 2}"><div class="session-turn-line">${seen.has(messagePreview(message.text)) ? `<span class="session-msg-text is-repeat">${escapeHtml(messagePreview(message.text))}</span><small class="session-repeat">same as turn ${seen.get(messagePreview(message.text))}</small>` : `<span class="session-msg-text">${escapeHtml(messagePreview(message.text))}</span>`}<span class="session-turn">${facts}</span></div>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(messagePreview(home(reply.text), { named: false })))}</span>` : ""}</td></tr>` };
     }),
     ...(ui.only ? [] : [
     ...marks.map((mark) => ({ t: mark.t, order: 1, html: `<tr class="session-mark-row is-${mark.kind}"><td class="session-num">${glyph(mark.kind === "compact" ? "layers" : "settings")}</td><td class="session-time">${clock(mark.t)}</td><td colspan="${width - 2}">${mark.kind === "compact" ? `Context compacted${mark.trigger ? ` (${escapeHtml(mark.trigger)})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""}` : `${mark.kind === "model" ? "Model" : "Effort"} changed to <b>${escapeHtml(mark.kind === "model" ? modelName(mark.label) : mark.label)}</b>`}</td></tr>` })),
     // An idle stretch longer than the prompt cache, between two requests in scope.
     ...requests.slice(1).map((request, position) => {
       const prior = requests[position], idle = request.t - prior.t;
-      if (idle <= IDLE || ui.find.trim()) return null;
       const cold = request.input && request.cached / request.input < 0.5;
+      // A gap the cache rode out is worth a row only when it is long; an expired cache always is.
+      if (idle <= IDLE || (!cold && idle < 30 * 60_000) || ui.find.trim()) return null;
       return { t: prior.t + 1, order: 3, html: `<tr class="session-gap-row${cold ? " is-cold" : ""}"><td class="session-num">${glyph("hourglass")}</td><td class="session-time">${minute(prior.t)}</td><td colspan="${width - 2}"><b>${span(idle)} idle</b>${cold ? ` · the prompt cache expired, so the next request wrote ${num(request.input - request.cached)} tokens again` : " · the prompt cache held"}</td></tr>` };
     }).filter(Boolean),
     ...requests.map((request, position) => {
@@ -516,7 +544,7 @@ function timelineTable({ requests, tools, messages, marks }) {
       return { t: request.t, order: 2, html: `<tr class="code-row session-req${request.text ? " has-text" : ""}${ui.pick === `r${request.index}` ? " is-picked" : ""}${hits.has(request.index) ? " is-hit" : ""}" data-s-pick="r${request.index}" tabindex="0">
         <td class="session-num">${position + 1}</td><td class="session-time" data-tip="${escapeHtml(`${new Date(request.t).toLocaleString()} · ${modelName(request.model)}${request.effort ? ` · ${request.effort}` : ""}`)}">${short(request.t)}</td>
         ${showAgent ? `<td class="session-agent-cell" style="--a:${agentColor(request.agent)}">${agentDot(request.agent)}${escapeHtml(request.agent ? data.agents[request.agent].label : "Main")}</td>` : ""}
-        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(plain(request.text))}</span>` : ""}</td><td class="session-did"><span class="session-tools">${names}${pinned}</span></td>
+        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(plain(messagePreview(request.text, { named: false })))}</span>` : ""}</td><td class="session-did"><span class="session-tools">${names}${pinned}</span></td>
         <td class="session-n is-context">${num(request.input)}</td>
         <td class="session-n${cache < 0.5 ? " is-warn" : " is-soft"}">${pct(request.cached, request.input)}</td>
         <td class="session-n${fresh >= 20_000 ? " is-heavy" : " is-soft"}" data-tip="${exact(fresh)} tokens not read from cache">${num(fresh)}</td>
@@ -786,8 +814,11 @@ function onClick(event) {
   if (pick) {
     ui.pick = pick.dataset.sPick;
     if (ui.pick.startsWith("x:")) ui.focus = ui.pick.slice(2);
-    if (pick.closest('[data-s="chart"]')) { ui.tab = "timeline"; renderBody(); return reveal(); }
-    renderBody();
+    if (pick.closest('[data-s="chart"]')) {
+      if (ui.tab === "timeline" && repick()) return reveal();
+      ui.tab = "timeline"; renderBody(); return reveal();
+    }
+    if (!repick()) renderBody();
   }
 }
 
@@ -798,6 +829,29 @@ function setMenu(open) {
   picker.innerHTML = agentPicker();
   if (open) (picker.querySelector('[aria-selected="true"]') || picker.querySelector("[data-s-agent-pick]"))?.focus({ preventScroll: true });
   else picker.querySelector("[data-s-agent-button]")?.focus({ preventScroll: true });
+}
+
+// A new selection in the same list: move the highlight and redraw the inspector and chart, without rebuilding a list
+// that can hold thousands of rows. False when the row is not on screen, so the caller renders in full.
+function repick() {
+  const list = dialog.querySelector('[data-s="list"]');
+  const row = list.querySelector(`[data-s-pick="${CSS.escape(ui.pick)}"]`);
+  if (!row) return false;
+  for (const old of list.querySelectorAll(".is-picked")) old.classList.remove("is-picked");
+  row.classList.add("is-picked");
+  setOverlayParams({ "session-pick": ui.pick });
+  const inspect = dialog.querySelector('[data-s="inspector"]');
+  inspect.innerHTML = inspector(scope());
+  inspect.scrollTop = 0;
+  markClamps(inspect);
+  // Only a finding changes what the chart lights up; any other pick just moves the picked bar.
+  if (ui.pick.startsWith("x:")) drawChart();
+  else {
+    const chart = dialog.querySelector('[data-s="chart"]');
+    chart.querySelector(".session-bar.is-picked")?.classList.remove("is-picked");
+    chart.querySelector(`.session-bar[data-s-pick="${CSS.escape(ui.pick)}"]`)?.classList.add("is-picked");
+  }
+  return true;
 }
 
 function reveal() {
@@ -865,7 +919,7 @@ function onKey(event) {
   if (next.dataset.sAgentRow) { next.focus(); return; }
   ui.pick = next.dataset.sPick;
   if (ui.pick.startsWith("x:")) ui.focus = ui.pick.slice(2);
-  renderBody();
+  if (!repick()) renderBody();
   const row = dialog.querySelector('[data-s="list"] .is-picked');
   row?.focus({ preventScroll: true });
   row?.scrollIntoView({ block: "nearest" });
