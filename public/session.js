@@ -32,6 +32,8 @@ export function span(ms) {
   return `${Math.floor(ms / 3_600_000)}h ${String(Math.round(ms % 3_600_000 / 60_000)).padStart(2, "0")}m`;
 }
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+// A clock without AM/PM for dense rows; the turn rows above them carry the full time.
+const short = (t) => clock(t).replace(/\s?[AP]M$/i, "");
 const minute = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const modelName = (id) => modelInfo(id)?.name || id || "—";
 const home = (text) => String(text ?? "").replace(/\/Users\/[^/\s"]+/g, "~");
@@ -109,6 +111,7 @@ export function openSession(key, { tab = "", agent = "", pick = "" } = {}) {
   ui = { tab: TABS[tab] ? tab : "", agent: agent === "all" ? -1 : Number(agent) || 0, pick: pick || null, find: "", focus: null, menu: false, only: ui.only };
   dialog.dataset.key = key;
   setOverlayParams({ session: key });
+  dialog.querySelector('[data-s="head"]').hidden = false;
   dialog.querySelector('[data-s="head"]').innerHTML = `<div class="session-title"><h3>Loading session…</h3></div><span class="code-spacer"></span>${closeButton()}`;
   dialog.querySelector('[data-s="main"]').innerHTML = `<p class="code-muted session-note">Reading the log…</p>`;
   dialog.dataset.sessionState = "loading";
@@ -129,6 +132,7 @@ export function openSession(key, { tab = "", agent = "", pick = "" } = {}) {
     dialog.dataset.sessionState = "ready";
   }).catch((error) => {
     if (dialog.dataset.key !== key) return;
+    dialog.querySelector('[data-s="head"]').hidden = false;
     dialog.querySelector('[data-s="head"]').innerHTML = `<div class="session-title"><h3>Session not found</h3><p class="code-muted">${escapeHtml(key)}</p></div><span class="code-spacer"></span>${closeButton()}`;
     dialog.querySelector('[data-s="main"]').innerHTML = `<p class="session-note">${escapeHtml(error.message)} Planboard reads Claude Code and Codex logs from this computer's ~/.claude and ~/.codex folders.</p>`;
     dialog.dataset.sessionState = "error";
@@ -218,23 +222,28 @@ function render() {
   const efforts = [...new Set(data.requests.filter((request) => request.agent === 0).map((request) => request.effort).filter(Boolean))];
   const folder = data.cwd.split("/").filter(Boolean).at(-1) || "";
   const facts = [models.map(modelName).join(" → "), efforts.join(" → "), folder, data.branch, data.start && formatDateTime(new Date(data.start))].filter(Boolean);
-  head.innerHTML = `<span class="session-mark">${brandMark(data.provider === "Claude" ? "claude" : "codex", `chat-app-mark is-${data.provider.toLowerCase()}`)}</span>
-    <div class="session-title"><h3>${escapeHtml(data.title)}</h3><p class="code-muted"><span data-tip="${escapeHtml(home(data.path))}">${escapeHtml(data.provider === "Claude" ? "Claude Code" : "Codex")}</span> · ${facts.map((fact, index) => index === 2 ? `<span data-tip="${escapeHtml(home(data.cwd))}">${escapeHtml(fact)}</span>` : escapeHtml(fact)).join(" · ")}</p></div>
-    <span class="code-spacer"></span>
-    <button type="button" class="code-bar-button" data-s-review data-tip="Save a prompt that asks an agent to explain the findings and your notes, and propose lasting fixes">${glyph("sparkles")}Review with an agent</button>
-    <a class="code-bar-button" href="${escapeHtml(data.url)}">${glyph("external-link")}Open in ${data.provider === "Claude" ? "Claude" : "Codex"}</a>${closeButton()}`;
+  // The loading header steps aside: the title and totals sit on the left and the chart runs to the top of the overlay.
+  head.hidden = true;
+  const app = data.provider === "Claude" ? "Claude Code" : "Codex";
+  const meta = `<span data-tip="${escapeHtml(home(data.path))}">${escapeHtml(app)}</span> · ${facts.map((fact, index) => index === 2 ? `<span data-tip="${escapeHtml(home(data.cwd))}">${escapeHtml(fact)}</span>` : escapeHtml(fact)).join(" · ")}`;
+  const title = `<div class="session-id"><span class="session-mark">${brandMark(data.provider === "Claude" ? "claude" : "codex", `chat-app-mark is-${data.provider.toLowerCase()}`)}</span>
+    <div class="session-title"><h3 data-tip="${escapeHtml(data.title)}">${escapeHtml(data.title)}</h3><p class="code-muted">${meta}</p></div></div>`;
+  const actions = `<button type="button" class="session-chart-button is-action" data-s-review data-tip="Save a prompt that asks an agent to explain the findings and your notes, and propose lasting fixes">${glyph("sparkles")}Review with an agent</button>
+    <a class="session-chart-button is-action" href="${escapeHtml(data.url)}">${glyph("external-link")}Open in ${data.provider === "Claude" ? "Claude" : "Codex"}</a>`;
   const agents = data.agents.length > 1 ? `<div class="session-agent" data-s="agent"></div>` : "";
   const legend = `<span class="session-legend" aria-label="Chart key"><span class="is-cached" data-tip="Prompt tokens read from the prompt cache">Cached</span><span class="is-write" data-tip="Prompt tokens written to the prompt cache">Written</span><span class="is-fresh" data-tip="Prompt tokens neither read from nor written to the cache">Uncached</span><span class="is-output">Output</span><span class="is-cumulative" data-tip="Running total of tokens processed">Total</span><span class="is-idle" data-tip="No request for longer than the 5-minute prompt cache">Idle</span><span class="is-compact">Compacted</span><span class="is-msg" data-tip="Your messages">You</span><span class="is-fail" data-tip="A failed tool call">Failed</span></span>`;
   dialog.querySelector('[data-s="main"]').innerHTML = `<div class="session-top" data-s="top" data-chart="${chartMode()}">
-      <div class="session-stats"><span class="session-stat-list" data-s="stats"></span><button type="button" class="session-chart-button is-show" data-s-chart="compact" data-tip="Show the chart">${glyph("chart-gantt")}Chart</button></div>
-      <div class="session-chart-panel"><div class="session-chart-bar">${legend}<span class="code-spacer"></span>
-        <button type="button" class="session-chart-button" data-s-chart="wide" data-tip="Widen the chart" aria-label="Widen the chart">${glyph("maximize")}</button>
-        <button type="button" class="session-chart-button" data-s-chart="compact" data-tip="Put the chart beside the totals" aria-label="Put the chart beside the totals">${glyph("minimize")}</button>
-        <button type="button" class="session-chart-button" data-s-chart="hidden" data-tip="Hide the chart" aria-label="Hide the chart">${glyph("x")}</button></div>
+      <div class="session-stats">${title}<span class="session-stat-list" data-s="stats"></span></div>
+      <div class="session-chart-panel"><div class="session-chart-bar">${actions}<span class="session-bar-rule"></span>
+        <button type="button" class="session-chart-button is-show" data-s-chart="compact" data-tip="Show the chart">${glyph("chart-gantt")}Show chart</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="wide" data-tip="Widen the chart" aria-label="Widen the chart">${glyph("maximize")}</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="compact" data-tip="Put the chart beside the totals" aria-label="Put the chart beside the totals">${glyph("minimize")}</button>
+        <button type="button" class="session-chart-button is-size" data-s-chart="hidden" data-tip="Hide the chart" aria-label="Hide the chart">${glyph("eye")}</button>
+        <span class="session-focus" data-s="focus"></span>${legend}<span class="code-spacer"></span>${closeButton()}</div>
       <div class="session-chart" data-s="chart"></div></div></div>
     <div class="session-toolbar"><div class="code-segment" role="tablist" aria-label="View">${Object.entries(TABS).filter(([key]) => key !== "agents" || data.agents.length > 1).map(([key, label]) => `<button type="button" role="tab" data-s-tab="${key}" aria-pressed="${ui.tab === key}">${label}<span class="code-count" data-s-count="${key}"></span></button>`).join("")}</div>
       ${agents}<label class="code-filter">${glyph("search")}<input type="search" data-s-find placeholder="Find a tool, file or message…" aria-label="Find in this session" spellcheck="false"></label>
-      <span class="session-focus" data-s="focus"></span><span class="code-spacer"></span>
+      <span class="code-spacer"></span>
       <button type="button" class="session-only" data-s-only aria-pressed="false" data-tip="Show only your messages, each with the agent's last word" hidden>${glyph("user")}Your messages only</button></div>
     <div class="session-split"><div class="session-list" data-s="list"></div><aside class="session-inspector" data-s="inspector" aria-label="Details"></aside></div>`;
   renderBody();
@@ -270,7 +279,7 @@ function renderBody() {
   }
   if (ui.tab === "findings" && !ui.pick && view.findings[0]) ui.focus = view.findings[0].id;
   const focus = focused();
-  dialog.querySelector('[data-s="focus"]').innerHTML = focus && ui.tab !== "findings" ? `<span>${glyph(SEVERITY_ICON[focus.severity])}${escapeHtml(focus.title)}</span><button type="button" class="code-icon-button" data-s-unfocus aria-label="Stop highlighting this finding">${glyph("x")}</button>` : "";
+  dialog.querySelector('[data-s="focus"]').innerHTML = focus && ui.tab !== "findings" ? `<span data-tip="This finding's requests are lit on the chart and tinted in the timeline">Highlighting <b>${escapeHtml(focus.title)}</b></span><button type="button" class="code-icon-button" data-s-unfocus aria-label="Stop highlighting this finding">${glyph("x")}</button>` : "";
   setOverlayParams({ "session-tab": ui.tab === (found.length ? "findings" : "timeline") ? "" : ui.tab, "session-agent": ui.agent === 0 ? "" : ui.agent < 0 ? "all" : String(ui.agent), "session-pick": ui.pick || "" });
   const list = dialog.querySelector('[data-s="list"]');
   const top = list.scrollTop;
@@ -334,7 +343,7 @@ function drawChart() {
   if (!host || chartMode() === "hidden") return;
   const { requests, messages, marks } = scope();
   const width = Math.max(320, host.clientWidth);
-  const height = chartMode() === "wide" ? 200 : 112;
+  const height = chartMode() === "wide" ? 200 : Math.max(96, (dialog.querySelector(".session-stats")?.offsetHeight || 150) - 28);
   const pad = { left: 44, right: 50, top: 16, bottom: 16 };
   const outH = chartMode() === "wide" ? 26 : 14;
   const inH = height - pad.top - pad.bottom - outH - 6;
@@ -471,7 +480,7 @@ function timelineTable({ requests, tools, messages, marks }) {
   const byRequest = Map.groupBy(tools, (tool) => tool.request);
   const showAgent = ui.agent < 0;
   const hits = new Set(focused()?.requests || []);
-  const width = showAgent ? 8 : 7;
+  const width = showAgent ? 9 : 8;
   const rows = [
     ...messages.map((message, turn) => {
       const index = data.messages.indexOf(message);
@@ -480,7 +489,7 @@ function timelineTable({ requests, tools, messages, marks }) {
       const facts = [plural(stats.requests.length, "request"), plural(stats.calls.length, "call"), stats.failed && `<em>${stats.failed} failed</em>`, span(stats.ms), stats.cost !== null && usd(stats.cost)].filter(Boolean).join(" · ");
       // With only your messages showing, each turn also shows the agent's last word, so the list reads as the conversation.
       const reply = ui.only && stats.requests.findLast((request) => request.text);
-      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time">${clock(message.t)}</td><td colspan="${width - 2}"><span class="session-turn"><b>Turn ${turn + 1}</b> · ${facts}</span><span class="session-msg-text">${escapeHtml(message.text)}</span>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(home(reply.text)))}</span>` : ""}</td></tr>` };
+      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time">${clock(message.t)}</td><td colspan="${width - 2}"><div class="session-turn-line"><b class="session-turn-label">Turn ${turn + 1}</b><span class="session-msg-text">${escapeHtml(message.text)}</span><span class="session-turn">${facts}</span></div>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(home(reply.text)))}</span>` : ""}</td></tr>` };
     }),
     ...(ui.only ? [] : [
     ...marks.map((mark) => ({ t: mark.t, order: 1, html: `<tr class="session-mark-row is-${mark.kind}"><td class="session-num">${glyph(mark.kind === "compact" ? "layers" : "settings")}</td><td class="session-time">${clock(mark.t)}</td><td colspan="${width - 2}">${mark.kind === "compact" ? `Context compacted${mark.trigger ? ` (${escapeHtml(mark.trigger)})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""}` : `${mark.kind === "model" ? "Model" : "Effort"} changed to <b>${escapeHtml(mark.kind === "model" ? modelName(mark.label) : mark.label)}</b>`}</td></tr>` })),
@@ -505,16 +514,16 @@ function timelineTable({ requests, tools, messages, marks }) {
       const fresh = request.input - request.cached;
       const cache = request.input ? request.cached / request.input : 1;
       return { t: request.t, order: 2, html: `<tr class="code-row session-req${request.text ? " has-text" : ""}${ui.pick === `r${request.index}` ? " is-picked" : ""}${hits.has(request.index) ? " is-hit" : ""}" data-s-pick="r${request.index}" tabindex="0">
-        <td class="session-num">${position + 1}</td><td class="session-time" data-tip="${escapeHtml(`${new Date(request.t).toLocaleString()} · ${modelName(request.model)}${request.effort ? ` · ${request.effort}` : ""}`)}">${clock(request.t)}</td>
+        <td class="session-num">${position + 1}</td><td class="session-time" data-tip="${escapeHtml(`${new Date(request.t).toLocaleString()} · ${modelName(request.model)}${request.effort ? ` · ${request.effort}` : ""}`)}">${short(request.t)}</td>
         ${showAgent ? `<td class="session-agent-cell" style="--a:${agentColor(request.agent)}">${agentDot(request.agent)}${escapeHtml(request.agent ? data.agents[request.agent].label : "Main")}</td>` : ""}
-        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(request.text.replace(/\s+/g, " "))}</span>` : ""}<span class="session-tools">${names}${pinned}</span></td>
+        <td class="session-step">${request.text ? `<span class="session-said">${escapeHtml(plain(request.text))}</span>` : ""}</td><td class="session-did"><span class="session-tools">${names}${pinned}</span></td>
         <td class="session-n is-context">${num(request.input)}</td>
         <td class="session-n${cache < 0.5 ? " is-warn" : " is-soft"}">${pct(request.cached, request.input)}</td>
         <td class="session-n${fresh >= 20_000 ? " is-heavy" : " is-soft"}" data-tip="${exact(fresh)} tokens not read from cache">${num(fresh)}</td>
         <td class="session-n is-soft">${num(request.output)}</td></tr>` };
     })]),
   ].sort((a, b) => a.t - b.t || a.order - b.order).map((row) => row.html).join("");
-  return `<table class="code-table session-table session-timeline"><thead><tr><th class="session-num">#</th><th>Time</th>${showAgent ? '<th class="session-agent-head">Agent</th>' : ""}<th>What the agent said and did</th><th class="session-n" data-tip="Prompt tokens: the context this request read">Context</th><th class="session-n" data-tip="Share of the prompt read from cache">Cache</th><th class="session-n" data-tip="Prompt tokens not read from cache">New</th><th class="session-n">Output</th></tr></thead><tbody>${rows || `<tr><td colspan="${width}" class="session-note">Nothing matches.</td></tr>`}</tbody></table>`;
+  return `<table class="code-table session-table session-timeline"><thead><tr><th class="session-num">#</th><th>Time</th>${showAgent ? '<th class="session-agent-head">Agent</th>' : ""}<th>Said</th><th class="session-did-head">Did</th><th class="session-n" data-tip="Prompt tokens: the context this request read">Context</th><th class="session-n" data-tip="Share of the prompt read from cache">Cache</th><th class="session-n" data-tip="Prompt tokens not read from cache">New</th><th class="session-n">Output</th></tr></thead><tbody>${rows || `<tr><td colspan="${width}" class="session-note">Nothing matches.</td></tr>`}</tbody></table>`;
 }
 
 function toolStats(tools) {

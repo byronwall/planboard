@@ -18,3 +18,7 @@ test("never breaks inside quotes, $( ) or a subshell", () => {
 test("names the programs a command runs, without cd or keywords", () => {
   assert.deepEqual(commandNames(`cd x; for t in a b; do wc -l $t | head; done; if [ -f y ]; then /usr/bin/git log; fi`), ["wc", "head", "git"]);
 });
+
+test("a heredoc's body is not read as commands", () => {
+  assert.deepEqual(commandNames("python3 - <<'EOF'\nimport re\np = open('x').read()\nEOF\nnode check.js"), ["python3", "node"]);
+});

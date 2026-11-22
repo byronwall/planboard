@@ -91,10 +91,14 @@ export function shellLines(text) {
 }
 
 // The programs a command runs, in order and once each, leaving out `cd` and shell keywords: "git head tail".
+// A heredoc's body is data, not commands: `cat <<'EOF'` keeps its first line and drops the body through the delimiter.
+const HEREDOC = /(<<-?\s*(['"]?)([\w.-]+)\2)([^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
+export const withoutHeredocs = (text) => String(text ?? "").replace(HEREDOC, "$1$4");
+
 export function commandNames(text) {
   const names = [];
   let start = true;
-  for (const token of lex(String(text ?? ""))) {
+  for (const token of lex(withoutHeredocs(text))) {
     if (token.kind === "space") continue;
     if (token.kind === "op" || token.kind === "newline") { start = RESETS.has(token.text) || start; continue; }
     if (start && token.kind === "word") {
@@ -108,7 +112,27 @@ export function commandNames(text) {
 
 // Colored HTML for a command, one `<span class="sh-line">` per line.
 export function shellHtml(text) {
-  const tokens = lex(String(text ?? ""));
+  // Heredoc bodies stay plain text; everything else is colored line by line.
+  const out = [];
+  let shell = [];
+  let delimiter = "";
+  const flush = () => { if (shell.length) out.push(colorLines(shell.join("\n"))); shell = []; };
+  for (const line of String(text ?? "").split("\n")) {
+    if (delimiter) {
+      out.push(`<span class="sh-line sh-heredoc">${escapeHtml(line) || " "}</span>`);
+      if (line.trim() === delimiter) delimiter = "";
+      continue;
+    }
+    shell.push(line);
+    const open = /<<-?\s*(['"]?)([\w.-]+)\1/.exec(line);
+    if (open) { flush(); delimiter = open[2]; }
+  }
+  flush();
+  return out.join("");
+}
+
+function colorLines(text) {
+  const tokens = lex(text);
   const lines = [[]];
   for (const token of tokens) token.kind === "newline" ? lines.push([]) : lines.at(-1).push(token);
   return lines.map((line) => {
