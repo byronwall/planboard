@@ -86,6 +86,8 @@ function argSummary(tool) {
   if (first !== undefined && first !== "") return home(Array.isArray(first) ? first.join(" ") : String(first)).replace(/\s+/g, " ");
   return home(JSON.stringify(args)).slice(0, 300);
 }
+// Markdown read as one line of plain text, for previews: no emphasis marks, code ticks or link targets.
+const plain = (text) => String(text ?? "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/(\*\*|__|`|^#+\s*|^\s*[-*]\s+)/gm, "").replace(/\s+/g, " ").trim();
 const relative = (path) => { const root = data?.cwd ? `${data.cwd.replace(/\/$/, "")}/` : ""; return root && path.startsWith(root) ? path.slice(root.length) : home(path); };
 
 let dialog = null;
@@ -94,16 +96,17 @@ let notes = [];
 let notesPath = "";
 let found = [];
 let notify = () => {};
-let ui = { tab: "", agent: 0, pick: null, find: "", focus: null, menu: false };
+let ui = { tab: "", agent: 0, pick: null, find: "", focus: null, menu: false, only: false };
 export const setSessionNotice = (show) => { notify = show; };
-// The chart can fold away to give the lists the height; the choice is kept per browser.
+// The chart sits beside the totals (compact), spans the overlay taller (wide), or folds away (hidden); the choice is
+// kept per browser.
 const CHART_KEY = "plan-viewer:session-chart";
-const chartShown = () => { try { return localStorage.getItem(CHART_KEY) !== "0"; } catch { return true; } };
-const setChartShown = (shown) => { try { localStorage.setItem(CHART_KEY, shown ? "1" : "0"); } catch {} };
+const chartMode = () => { try { const value = localStorage.getItem(CHART_KEY); return value === "0" || value === "hidden" ? "hidden" : value === "wide" ? "wide" : "compact"; } catch { return "compact"; } };
+const setChartMode = (mode) => { try { localStorage.setItem(CHART_KEY, mode); } catch {} };
 
 export function openSession(key, { tab = "", agent = "", pick = "" } = {}) {
   if (!dialog) build();
-  ui = { tab: TABS[tab] ? tab : "", agent: agent === "all" ? -1 : Number(agent) || 0, pick: pick || null, find: "", focus: null, menu: false };
+  ui = { tab: TABS[tab] ? tab : "", agent: agent === "all" ? -1 : Number(agent) || 0, pick: pick || null, find: "", focus: null, menu: false, only: ui.only };
   dialog.dataset.key = key;
   setOverlayParams({ session: key });
   dialog.querySelector('[data-s="head"]').innerHTML = `<div class="session-title"><h3>Loading session…</h3></div><span class="code-spacer"></span>${closeButton()}`;
@@ -222,12 +225,17 @@ function render() {
     <a class="code-bar-button" href="${escapeHtml(data.url)}">${glyph("external-link")}Open in ${data.provider === "Claude" ? "Claude" : "Codex"}</a>${closeButton()}`;
   const agents = data.agents.length > 1 ? `<div class="session-agent" data-s="agent"></div>` : "";
   const legend = `<span class="session-legend" aria-label="Chart key"><span class="is-cached" data-tip="Prompt tokens read from the prompt cache">Cached</span><span class="is-write" data-tip="Prompt tokens written to the prompt cache">Written</span><span class="is-fresh" data-tip="Prompt tokens neither read from nor written to the cache">Uncached</span><span class="is-output">Output</span><span class="is-cumulative" data-tip="Running total of tokens processed">Total</span><span class="is-idle" data-tip="No request for longer than the 5-minute prompt cache">Idle</span><span class="is-compact">Compacted</span><span class="is-msg" data-tip="Your messages">You</span><span class="is-fail" data-tip="A failed tool call">Failed</span></span>`;
-  dialog.querySelector('[data-s="main"]').innerHTML = `<div class="session-stats"><span class="session-stat-list" data-s="stats"></span>
-      <button type="button" class="session-chart-toggle" data-s-chart aria-pressed="${chartShown()}" data-tip="Show or hide the chart">${glyph("chart-gantt")}Chart${glyph("chevron-right", "code-icon session-chevron")}</button></div>
-    <div class="session-chart" data-s="chart"${chartShown() ? "" : " hidden"}></div>
+  dialog.querySelector('[data-s="main"]').innerHTML = `<div class="session-top" data-s="top" data-chart="${chartMode()}">
+      <div class="session-stats"><span class="session-stat-list" data-s="stats"></span><button type="button" class="session-chart-button is-show" data-s-chart="compact" data-tip="Show the chart">${glyph("chart-gantt")}Chart</button></div>
+      <div class="session-chart-panel"><div class="session-chart-bar">${legend}<span class="code-spacer"></span>
+        <button type="button" class="session-chart-button" data-s-chart="wide" data-tip="Widen the chart" aria-label="Widen the chart">${glyph("maximize")}</button>
+        <button type="button" class="session-chart-button" data-s-chart="compact" data-tip="Put the chart beside the totals" aria-label="Put the chart beside the totals">${glyph("minimize")}</button>
+        <button type="button" class="session-chart-button" data-s-chart="hidden" data-tip="Hide the chart" aria-label="Hide the chart">${glyph("x")}</button></div>
+      <div class="session-chart" data-s="chart"></div></div></div>
     <div class="session-toolbar"><div class="code-segment" role="tablist" aria-label="View">${Object.entries(TABS).filter(([key]) => key !== "agents" || data.agents.length > 1).map(([key, label]) => `<button type="button" role="tab" data-s-tab="${key}" aria-pressed="${ui.tab === key}">${label}<span class="code-count" data-s-count="${key}"></span></button>`).join("")}</div>
       ${agents}<label class="code-filter">${glyph("search")}<input type="search" data-s-find placeholder="Find a tool, file or message…" aria-label="Find in this session" spellcheck="false"></label>
-      <span class="session-focus" data-s="focus"></span>${legend}</div>
+      <span class="session-focus" data-s="focus"></span><span class="code-spacer"></span>
+      <button type="button" class="session-only" data-s-only aria-pressed="false" data-tip="Show only your messages, each with the agent's last word" hidden>${glyph("user")}Your messages only</button></div>
     <div class="session-split"><div class="session-list" data-s="list"></div><aside class="session-inspector" data-s="inspector" aria-label="Details"></aside></div>`;
   renderBody();
 }
@@ -240,7 +248,8 @@ function renderBody() {
   dialog.querySelector('[data-s="stats"]').innerHTML = [
     stat("Cost", usd(all.cost), all.exactCost ? "Claude Code's own total for this session" : all.priced ? `Estimated from public API prices for ${all.priced} of ${all.requests} requests` : "No price is known for this model", all.cost !== null && !all.exactCost ? "estimate" : ""),
     stat("Requests", exact(all.requests)),
-    stat("Input", `${num(all.input)} <small>${pct(all.cached, all.input)} cached</small>`, `${exact(all.input)} prompt tokens: ${exact(all.cached)} read from cache, ${exact(all.write)} written to it, ${exact(all.input - all.cached - all.write)} uncached`),
+    stat("Input", num(all.input), `${exact(all.input)} prompt tokens: ${exact(all.cached)} read from cache, ${exact(all.write)} written to it, ${exact(all.input - all.cached - all.write)} uncached`),
+    stat("Cache read", pct(all.cached, all.input), `${exact(all.cached)} of ${exact(all.input)} prompt tokens came from the prompt cache`),
     stat("Output", num(all.output), `${exact(all.output)} output tokens, ${exact(all.reasoning)} of them reasoning`),
     stat("Peak context", num(all.peak), `The largest single prompt: ${exact(all.peak)} tokens`),
     stat("Tool calls", `${exact(all.tools)}${all.errors ? ` <em>${all.errors} failed</em>` : ""}`),
@@ -251,6 +260,9 @@ function renderBody() {
   for (const button of dialog.querySelectorAll("[data-s-tab]")) button.setAttribute("aria-pressed", String(button.dataset.sTab === ui.tab));
   const picker = dialog.querySelector('[data-s="agent"]');
   if (picker) picker.innerHTML = agentPicker();
+  const only = dialog.querySelector("[data-s-only]");
+  only.hidden = ui.tab !== "timeline";
+  only.setAttribute("aria-pressed", String(ui.only));
   const counts = { findings: view.findings.length, timeline: view.requests.length, tools: new Set(view.tools.map((tool) => tool.name)).size, files: fileRows(view.tools).length, agents: data.agents.length, notes: notes.length };
   for (const count of dialog.querySelectorAll("[data-s-count]")) {
     count.textContent = counts[count.dataset.sCount];
@@ -319,12 +331,12 @@ function pickAgent(index) {
 
 function drawChart() {
   const host = dialog.querySelector('[data-s="chart"]');
-  if (!host || host.hidden) return;
+  if (!host || chartMode() === "hidden") return;
   const { requests, messages, marks } = scope();
   const width = Math.max(320, host.clientWidth);
-  const height = 132;
+  const height = chartMode() === "wide" ? 200 : 112;
   const pad = { left: 44, right: 50, top: 16, bottom: 16 };
-  const outH = 18;
+  const outH = chartMode() === "wide" ? 26 : 14;
   const inH = height - pad.top - pad.bottom - outH - 6;
   const base = pad.top + inH;
   if (!requests.length) { host.innerHTML = `<p class="code-muted session-note">No model requests in this scope.</p>`; return; }
@@ -466,8 +478,11 @@ function timelineTable({ requests, tools, messages, marks }) {
       if (!matches(message.text)) return { t: message.t, order: 0, html: "" };
       const stats = turnStats(message, messages, requests, tools);
       const facts = [plural(stats.requests.length, "request"), plural(stats.calls.length, "call"), stats.failed && `<em>${stats.failed} failed</em>`, span(stats.ms), stats.cost !== null && usd(stats.cost)].filter(Boolean).join(" · ");
-      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time">${clock(message.t)}</td><td colspan="${width - 2}"><span class="session-turn"><b>Turn ${turn + 1}</b> · ${facts}</span><span class="session-msg-text">${escapeHtml(message.text)}</span></td></tr>` };
+      // With only your messages showing, each turn also shows the agent's last word, so the list reads as the conversation.
+      const reply = ui.only && stats.requests.findLast((request) => request.text);
+      return { t: message.t, order: 0, html: `<tr class="code-row session-msg-row${ui.pick === `m${index}` ? " is-picked" : ""}" data-s-pick="m${index}" tabindex="0"><td class="session-num">${glyph("user")}</td><td class="session-time">${clock(message.t)}</td><td colspan="${width - 2}"><span class="session-turn"><b>Turn ${turn + 1}</b> · ${facts}</span><span class="session-msg-text">${escapeHtml(message.text)}</span>${reply ? `<span class="session-reply">${glyph("bot")}${escapeHtml(plain(home(reply.text)))}</span>` : ""}</td></tr>` };
     }),
+    ...(ui.only ? [] : [
     ...marks.map((mark) => ({ t: mark.t, order: 1, html: `<tr class="session-mark-row is-${mark.kind}"><td class="session-num">${glyph(mark.kind === "compact" ? "layers" : "settings")}</td><td class="session-time">${clock(mark.t)}</td><td colspan="${width - 2}">${mark.kind === "compact" ? `Context compacted${mark.trigger ? ` (${escapeHtml(mark.trigger)})` : ""}${mark.before ? `: ${exact(mark.before)} → ${exact(mark.after || 0)} tokens` : ""}` : `${mark.kind === "model" ? "Model" : "Effort"} changed to <b>${escapeHtml(mark.kind === "model" ? modelName(mark.label) : mark.label)}</b>`}</td></tr>` })),
     // An idle stretch longer than the prompt cache, between two requests in scope.
     ...requests.slice(1).map((request, position) => {
@@ -497,7 +512,7 @@ function timelineTable({ requests, tools, messages, marks }) {
         <td class="session-n${cache < 0.5 ? " is-warn" : " is-soft"}">${pct(request.cached, request.input)}</td>
         <td class="session-n${fresh >= 20_000 ? " is-heavy" : " is-soft"}" data-tip="${exact(fresh)} tokens not read from cache">${num(fresh)}</td>
         <td class="session-n is-soft">${num(request.output)}</td></tr>` };
-    }),
+    })]),
   ].sort((a, b) => a.t - b.t || a.order - b.order).map((row) => row.html).join("");
   return `<table class="code-table session-table session-timeline"><thead><tr><th class="session-num">#</th><th>Time</th>${showAgent ? '<th class="session-agent-head">Agent</th>' : ""}<th>What the agent said and did</th><th class="session-n" data-tip="Prompt tokens: the context this request read">Context</th><th class="session-n" data-tip="Share of the prompt read from cache">Cache</th><th class="session-n" data-tip="Prompt tokens not read from cache">New</th><th class="session-n">Output</th></tr></thead><tbody>${rows || `<tr><td colspan="${width}" class="session-note">Nothing matches.</td></tr>`}</tbody></table>`;
 }
@@ -645,7 +660,8 @@ function markClamps(root) {
 
 function inspector(view) {
   const first = { findings: view.findings[0] && `x:${view.findings[0].id}`, tools: toolStats(view.tools)[0] && `t:${toolStats(view.tools)[0].name}`,
-    files: fileRows(view.tools)[0] && `f:${fileRows(view.tools)[0].path}`, notes: notes[0] && `n:${notes[0].id}` }[ui.tab];
+    files: fileRows(view.tools)[0] && `f:${fileRows(view.tools)[0].path}`, notes: notes[0] && `n:${notes[0].id}`,
+    timeline: ui.only && view.messages[0] ? `m${data.messages.indexOf(view.messages[0])}` : "" }[ui.tab];
   const pick = ui.pick || first || (view.requests[0] ? `r${view.requests[0].index}` : "");
   if (pick.startsWith("x:")) {
     const finding = found.find((item) => item.id === pick.slice(2));
@@ -722,14 +738,14 @@ function onClick(event) {
     return;
   }
   if (event.target.closest("[data-s-review]")) return review(event.target.closest("[data-s-review]"));
-  const toggle = event.target.closest("[data-s-chart]");
-  if (toggle) {
-    const shown = !chartShown();
-    setChartShown(shown);
-    toggle.setAttribute("aria-pressed", String(shown));
-    dialog.querySelector('[data-s="chart"]').hidden = !shown;
+  const size = event.target.closest("[data-s-chart]");
+  if (size) {
+    setChartMode(size.dataset.sChart);
+    dialog.querySelector('[data-s="top"]').dataset.chart = size.dataset.sChart;
+    hideTip();
     return drawChart();
   }
+  if (event.target.closest("[data-s-only]")) { ui.only = !ui.only; ui.pick = null; return renderBody(); }
   const agentPick = event.target.closest("[data-s-agent-pick]");
   if (agentPick) return pickAgent(Number(agentPick.dataset.sAgentPick));
   if (event.target.closest("[data-s-agent-button]")) return setMenu(!ui.menu);
