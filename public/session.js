@@ -82,7 +82,7 @@ function argSummary(tool) {
   if (!args) return home(tool.args.split("\n").find((line) => line.trim()) || "");
   const files = toolFiles(tool);
   if (files.length) return home(files.map(relative).join(", "));
-  const first = command(tool) || (args.pattern ?? args.query ?? args.url ?? args.description ?? args.prompt ?? args.message ?? args.code ?? args.task_name);
+  const first = command(tool) || (args.pattern ?? args.query ?? args.url ?? args.title ?? args.description ?? args.prompt ?? args.message ?? args.code ?? args.task_name);
   if (first !== undefined && first !== "") return home(Array.isArray(first) ? first.join(" ") : String(first)).replace(/\s+/g, " ");
   return home(JSON.stringify(args)).slice(0, 300);
 }
@@ -265,6 +265,7 @@ function renderBody() {
   list.innerHTML = { findings: findingsTable, tools: toolsTable, files: filesTable, agents: agentsTable, notes: notesTable }[ui.tab]?.(view) ?? timelineTable(view);
   list.scrollTop = top;
   dialog.querySelector('[data-s="inspector"]').innerHTML = inspector(view);
+  markClamps(dialog.querySelector('[data-s="inspector"]'));
   drawChart();
 }
 
@@ -614,8 +615,32 @@ function toolBlock(tool) {
 }
 
 // One line per call, for lists in the inspector; a click shows the call's request in the timeline.
+// Each call: its time, then the tool (in lists of several tools) above what it ran, cut to two lines with More to read
+// the rest, then its duration.
 function callRows(calls, { name = true } = {}) {
-  return `<table class="session-calls"><tbody>${calls.map((tool) => `<tr class="code-row${tool.error ? " is-error" : ""}" data-s-goto="${tool.request}" data-s-call="${data.tools.indexOf(tool)}" tabindex="0" data-tip="Show this call in the timeline"><td class="session-time">${clock(tool.t)}</td>${name ? `<td>${escapeHtml(tool.name)}</td>` : ""}<td class="session-args">${command(tool) ? `<code class="session-shell">${shellHtml(shellLines(home(command(tool))))}</code>` : escapeHtml(argSummary(tool))}</td><td class="session-n">${span(tool.dur)}</td><td class="session-n">${tool.error ? glyph("triangle-alert") : noted(tool).length ? glyph("pen-line") : ""}</td></tr>`).join("")}</tbody></table>`;
+  return `<div class="session-calls">${calls.map((tool) => {
+    const { kind, icon } = toolKind(tool.name);
+    // A leading `cd` becomes "in <folder>" in the header, so both preview lines show what ran.
+    const shell = command(tool) ? home(command(tool)) : "";
+    const cd = /^\s*cd\s+("[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/.exec(shell);
+    const folder = cd ? cd[1].replace(/^["']|["']$/g, "") : "";
+    const body = shell ? `<code class="session-shell">${shellHtml(shellLines(cd ? shell.slice(cd[0].length) : shell))}</code>` : `<span class="session-args">${escapeHtml(argSummary(tool))}</span>`;
+    const chip = name ? `<span class="session-chip is-${kind}${tool.error ? " is-error" : ""}"${tool.name.startsWith("mcp__") ? ` data-tip="${escapeHtml(tool.name)}"` : ""}>${glyph(tool.error ? "triangle-alert" : icon)}<b>${escapeHtml(toolLabel(tool.name))}</b></span>` : "";
+    const place = folder ? `<span class="session-call-folder" data-tip="${escapeHtml(`cd ${folder}`)}">in ${escapeHtml(folder.replace(/\/$/, "").split("/").at(-1))}</span>` : "";
+    return `<div class="code-row session-call-row${tool.error ? " is-error" : ""}" data-s-goto="${tool.request}" data-s-call="${data.tools.indexOf(tool)}" tabindex="0">
+      <span class="session-time">${clock(tool.t)}</span>
+      <div class="session-call-main">${chip || place ? `<div class="session-call-head">${chip}${place}</div>` : ""}${clamp(body, 2)}</div>
+      <span class="session-call-side">${tool.error && !name ? glyph("triangle-alert", "code-icon is-error") : ""}${noted(tool).length ? glyph("pen-line", "code-icon is-note") : ""}${span(tool.dur)}</span></div>`;
+  }).join("")}</div>`;
+}
+
+// Long text shows its first lines; More (shown only when the text is cut) opens the rest in place.
+const clamp = (html, lines) => `<div class="session-clamp" style="--lines:${lines}"><div class="session-clamp-body">${html}</div><button type="button" class="session-more" data-s-more hidden>More</button></div>`;
+function markClamps(root) {
+  for (const box of root.querySelectorAll(".session-clamp:not(.is-open)")) {
+    const body = box.firstElementChild;
+    box.querySelector("[data-s-more]").hidden = body.scrollHeight <= body.clientHeight + 1;
+  }
 }
 
 function inspector(view) {
@@ -628,7 +653,7 @@ function inspector(view) {
     const calls = finding.calls.map((index) => data.tools[index]);
     const requests = finding.calls.length ? [] : finding.requests.map((index) => data.requests[index]);
     return `<h4>${glyph(SEVERITY_ICON[finding.severity], `code-icon is-${finding.severity}`)}${escapeHtml(finding.title)}</h4>
-      <p>${escapeHtml(home(finding.detail))}</p>
+      ${clamp(`<p>${escapeHtml(home(finding.detail))}</p>`, 4)}
       <dl class="session-facts">${[["Agent", agentName(finding.agent)], ["Impact", finding.tokens ? `about ${exact(finding.tokens)} tokens` : finding.ms ? span(finding.ms) : "—"], ...(finding.cost ? [["Cost", usd(finding.cost)]] : [])].map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>
       <div class="session-advice">${escapeHtml(ADVICE[finding.kind] || "")}</div>
       <p class="session-label">${calls.length ? plural(calls.length, "call") : plural(requests.length, "request")} · lit up on the chart</p>
@@ -689,6 +714,13 @@ function inspector(view) {
 function onClick(event) {
   if (event.target === dialog) return;
   if (event.target.closest("[data-s-close]")) return dialog.close();
+  const more = event.target.closest("[data-s-more]");
+  if (more) {
+    const box = more.closest(".session-clamp");
+    box.classList.toggle("is-open");
+    more.textContent = box.classList.contains("is-open") ? "Less" : "More";
+    return;
+  }
   if (event.target.closest("[data-s-review]")) return review(event.target.closest("[data-s-review]"));
   const toggle = event.target.closest("[data-s-chart]");
   if (toggle) {

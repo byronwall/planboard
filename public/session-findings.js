@@ -144,7 +144,7 @@ export function findings(data) {
   const slow = tools.filter((tool) => (tool.dur || 0) >= SLOW_CALL && tool.spawns === undefined && !/^(?:Agent|Task|wait|wait_agent)$/.test(tool.name));
   if (slow.length) {
     found.push({ kind: "slow", severity: "info", agent: slow[0].agent, agents: [...new Set(slow.map((tool) => tool.agent))],
-      title: `${plural(slow.length, "call")} took over a minute`, detail: slow.map((tool) => `${summary(tool).slice(0, 60)} ${seconds(tool.dur)}`).join(" · "),
+      title: `${plural(slow.length, "call")} took over a minute`, detail: slowest(slow),
       calls: slow.map((tool) => tool.index), tokens: 0, ms: slow.reduce((sum, tool) => sum + tool.dur, 0) });
   }
 
@@ -164,11 +164,22 @@ export function findings(data) {
 }
 
 const firstLine = (text) => String(text || "").replace(/<\/?[\w-]+>/g, "").split("\n").map((line) => line.trim()).find((line) => line && !/^(?:Exit code|Wall time|Output):?/.test(line)) || "";
+// A call in a few words: its files, its command without the leading `cd`, or its pattern, title or description.
+// Arguments with none of those fall back to the tool's name, never raw JSON.
 function summary(tool) {
   const files = toolFiles(tool);
   if (files.length) return files.map(base).join(", ");
+  const shell = command(tool);
+  if (shell) return shell.replace(/^\s*(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, "").replace(/\s+/g, " ");
   const args = parseArgs(tool);
-  return command(tool) || String(args?.pattern ?? args?.query ?? args?.description ?? args?.url ?? tool.args).replace(/\s+/g, " ");
+  if (!args) return String(tool.args).replace(/\s+/g, " ");
+  const value = [args.pattern, args.query, args.title, args.description, args.url, args.prompt, args.message].find((item) => typeof item === "string" && item.trim());
+  return (value ?? (tool.name.startsWith("mcp__") ? tool.name.split("__").slice(2).join("__") : tool.name)).replace(/\s+/g, " ");
+}
+// The slowest calls first, three of them, then how many more.
+function slowest(slow) {
+  const top = [...slow].sort((a, b) => b.dur - a.dur);
+  return `${top.slice(0, 3).map((tool) => `${summary(tool).slice(0, 56)} (${seconds(tool.dur)})`).join(" · ")}${top.length > 3 ? `, and ${top.length - 3} more` : ""}`;
 }
 function seconds(ms) {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;

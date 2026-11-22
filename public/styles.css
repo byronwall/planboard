@@ -4040,7 +4040,28 @@ pre.session-shell { margin: 0 0 6px; max-height: 300px; overflow: auto; padding:
 .sh-path { color: #2c5fb3; }
 .sh-op { color: #c0392b; font-weight: 600; }
 .sh-comment { color: var(--quiet-text); font-style: italic; }
-.session-calls .code-icon { width: 12px; height: 12px; color: var(--danger); }
+.session-calls td .code-icon { width: 12px; height: 12px; color: var(--danger); }
+div.session-calls { display: grid; }
+.session-call-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 0 10px; min-width: 0; padding: 5px 6px; border-bottom: 1px solid #edf0f4; border-radius: 4px; font-size: .76rem; transition: background-color 120ms; }
+@media (hover: hover) { .session-call-row:hover { background: var(--hover-field); } }
+.session-call-row > .session-time { width: auto; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.session-call-main { display: grid; gap: 1px; min-width: 0; }
+.session-call-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-call-head .session-chip { min-width: 0; overflow: hidden; }
+.session-call-head .session-chip b { overflow: hidden; text-overflow: ellipsis; }
+.session-call-side { display: inline-flex; align-items: center; gap: 4px; color: var(--body-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.session-call-side .code-icon.is-note { width: 12px; height: 12px; color: var(--s-waste); }
+.session-call-side .code-icon.is-error { width: 12px; height: 12px; color: var(--danger); }
+.session-call-folder { min-width: 0; overflow: hidden; color: var(--quiet-text); font: .7rem ui-monospace, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.session-call-row .session-args { color: var(--body-ink); line-height: 1.45; }
+.session-clamp { min-width: 0; }
+.session-clamp-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--lines, 2); overflow: hidden; }
+.session-clamp.is-open .session-clamp-body { display: block; }
+.session-clamp-body > p { margin: 0; }
+.session-inspector > .session-clamp { margin: 0 0 8px; font-size: .78rem; line-height: 1.45; }
+.session-more { min-height: 20px; margin-top: 1px; border: 0; border-radius: 5px; background: none; padding: 0 5px; margin-left: -5px; color: var(--action-ink, #3157d5); font-size: .72rem; transition: background-color 120ms; }
+@media (hover: hover) { .session-more:hover { background: var(--quiet-field); } }
+.session-more:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
 .session-table .code-row, .session-calls .code-row { cursor: pointer; }
 .session-table .code-row:focus-visible, .session-calls .code-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
 .session-open { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: 2px; vertical-align: -6px; border: 0; border-radius: 6px; background: none; color: var(--muted); padding: 0; transition: background-color 140ms, color 140ms; }
@@ -4071,7 +4092,7 @@ pre.session-shell { margin: 0 0 6px; max-height: 300px; overflow: auto; padding:
 .session-findings .is-problem .session-num, .code-icon.is-problem { color: var(--s-problem); }
 .session-findings .is-waste .session-num, .code-icon.is-waste { color: var(--s-waste); }
 .session-findings .is-info .session-num, .code-icon.is-info { color: var(--s-info); }
-.session-detail { display: block; margin-top: 1px; color: var(--muted); font-size: .76rem; line-height: 1.4; overflow-wrap: anywhere; text-wrap: pretty; }
+.session-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-top: 1px; color: var(--muted); font-size: .76rem; line-height: 1.4; overflow-wrap: anywhere; text-wrap: pretty; }
 .session-turn { display: block; color: var(--label-text); font-size: .7rem; font-variant-numeric: tabular-nums; }
 .session-turn b { color: var(--body-ink); font-weight: 600; }
 .session-turn em { color: var(--danger); font-style: normal; }
