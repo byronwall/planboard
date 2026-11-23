@@ -58,3 +58,13 @@ test("planboard refs flags unlisted PRs carrying the tracked key, and missing li
   assert.deepEqual(bare.map((finding) => finding.problem), ["no tracks: line, but the text names ATL-412, OPS-9", "no resolves: line, but the text links #1857"]);
   assert.match(bare[0].fix, /tracks: \[ATL-412\]/);
 });
+
+test("an empty tracks: or resolves: list means none on purpose", () => {
+  const prs = [{ slug: "acme/atlas", number: 1871, title: "ATL-412 Pending invites list", branch: "", state: "open" }];
+  const text = "Tracked as ATL-412. See #1857 for the earlier fix.\n";
+  assert.deepEqual(referenceFindings(path, task("tracks: []\nresolves: []\n", text), prs, {}), []);
+  assert.deepEqual(parseTaskDocument(path, task("tracks: []\nresolves: []\n")).task.noRefs, ["tracks", "resolves"]);
+  // An empty resolves: still asks for tracks:, and a listed issue still flags PRs that carry it unless resolves: is [].
+  assert.deepEqual(referenceFindings(path, task("resolves: []\n", text), prs, {}).map((finding) => finding.problem), ["no tracks: line, but the text names ATL-412"]);
+  assert.equal(referenceFindings(path, task("tracks: [ATL-412]\nresolves: []\n", text), prs, {}).length, 0);
+});

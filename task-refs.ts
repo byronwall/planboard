@@ -46,9 +46,10 @@ export function referenceFindings(path: string, markdown: string, prs: CachedPr[
   const named = mentioned(body, path);
   const resolves = refs.some((ref) => ref.role === "resolves");
 
-  if (!refs.some((ref) => ref.role === "tracks")) {
+  const none = new Set(task.noRefs || []);
+  if (!refs.some((ref) => ref.role === "tracks") && !none.has("tracks")) {
     const issues = [...named].filter(([key]) => isIssue(key)).sort((a, b) => b[1] - a[1]);
-    if (issues.length) add(`no tracks: line, but the text names ${issues.map(([key]) => key.replace(/^\w+:/, "").toUpperCase()).join(", ")}`, `add the one issue that tracks this task, e.g. tracks: [${issues[0][0].replace(/^\w+:/, "").toUpperCase()}]`);
+    if (issues.length) add(`no tracks: line, but the text names ${issues.map(([key]) => key.replace(/^\w+:/, "").toUpperCase()).join(", ")}`, `add the one issue that tracks this task, e.g. tracks: [${issues[0][0].replace(/^\w+:/, "").toUpperCase()}], or tracks: [] when none does`);
   }
   // PRs whose title or branch carries a tracked key are the strongest signal: GitHub and Jira link them the same way.
   const carrying = new Map<string, CachedPr>();
@@ -66,10 +67,12 @@ export function referenceFindings(path: string, markdown: string, prs: CachedPr[
       carrying.set(key, { slug, number: Number(number), title, branch: "", state: "" });
     }
   }
-  for (const pr of carrying.values()) add(`${prRef(pr.slug, pr.number)} “${pr.title}”${pr.state ? ` (${pr.state.toLowerCase()})` : ""} carries ${tracked.join(", ")} but isn't listed`, `add ${prRef(pr.slug, pr.number)} to resolves:, or tag the step it carries with (pr: ${prRef(pr.slug, pr.number)}); leave it out only if it is a reference, not part of the fix`);
+  // `resolves: []` says no PR resolves this task, so neither a carried key nor a linked PR asks for one.
+  if (none.has("resolves")) return findings;
+  for (const pr of carrying.values()) add(`${prRef(pr.slug, pr.number)} “${pr.title}”${pr.state ? ` (${pr.state.toLowerCase()})` : ""} carries ${tracked.join(", ")} but isn't listed`, `add ${prRef(pr.slug, pr.number)} to resolves:, or tag the step it carries with (pr: ${prRef(pr.slug, pr.number)}); leave it out only if it is a reference, not part of the fix (resolves: [] when no PR resolves the task)`);
   if (!resolves && !carrying.size) {
     const linked = [...named].filter(([key]) => isPr(key)).map(([key]) => key.match(/^github:(.+)#(\d+)$/)!);
-    if (linked.length) add(`no resolves: line, but the text links ${linked.map(([, slug, n]) => prRef(slug, Number(n))).join(", ")}`, "list the PRs that resolve this task in resolves: (or tag their steps with (pr: …)); PRs that are only references stay out");
+    if (linked.length) add(`no resolves: line, but the text links ${linked.map(([, slug, n]) => prRef(slug, Number(n))).join(", ")}`, "list the PRs that resolve this task in resolves: (or tag their steps with (pr: …)); PRs that are only references stay out, and resolves: [] says none does");
   }
   return findings;
 }

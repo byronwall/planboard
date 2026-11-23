@@ -42,7 +42,7 @@ resolves: [#1857]     # the PRs that resolve it
 ---
 ```
 
-`tracks` and `resolves` are the task's canonical references: THE issue it is about and THE PRs that do the work, shown on one line under the task's title. A PR that is only context (a precedent, a related fix, someone else's change) stays out of them and in the text. Write refs as the text would (`ATL-412`, `#1857`, `Orbit#12`, or a URL). Keep them current: add a PR when you open it for the task, and run `planboard refs` after a task changes; it lists PRs that carry the tracked issue's key but aren't listed, and tasks that link PRs or issues with no `resolves` or `tracks` line. A step's PR can instead be named on its line with `(pr: #1857)`, which also counts as `resolves`.
+`tracks` and `resolves` are the task's canonical references: THE issue it is about and THE PRs that do the work, shown on one line under the task's title. A PR that is only context (a precedent, a related fix, someone else's change) stays out of them and in the text. Write refs as the text would (`ATL-412`, `#1857`, `Orbit#12`, or a URL). Keep them current: add a PR when you open it for the task, and run `planboard refs` after a task changes; it lists PRs that carry the tracked issue's key but aren't listed, and tasks that link PRs or issues with no `resolves` or `tracks` line. A step's PR can instead be named on its line with `(pr: #1857)`, which also counts as `resolves`. When a task has no such issue or no PR resolves it (a decision, an investigation), write `tracks: []` or `resolves: []`, which tells `refs` it is none on purpose.
 
 Then, in any order:
 

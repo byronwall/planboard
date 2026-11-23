@@ -138,6 +138,8 @@ export type TaskSummary = {
   chatLinks?: { href: string; provider: string; label: string }[];
   // Canonical references from the `tracks:`/`resolves:` lists and step `(pr:)` tags; `href` is empty when a ref can't be linked.
   refs?: TaskReference[];
+  // Roles written as an empty list: none on purpose.
+  noRefs?: string[];
 };
 export type TaskReference = { role: string; ref: string; href: string; key: string; steps: string[] };
 
@@ -250,6 +252,9 @@ export function parseTaskDocument(path: string, markdown: string) {
   if (chatLinks.length) task.chatLinks = chatLinks;
   const refs = taskReferences(path, fields, body);
   if (refs.length) task.refs = refs;
+  // A role written as an empty list (`resolves: []`) says the task has none on purpose, so `planboard refs` stops asking.
+  const none = REFERENCE_ROLES.map(({ key }) => key).filter((key) => fields.get(key) === "[]" && !refs.some((ref) => ref.role === key));
+  if (none.length) task.noRefs = none;
   return { task, body };
 }
 
