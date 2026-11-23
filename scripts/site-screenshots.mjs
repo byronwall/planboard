@@ -56,7 +56,7 @@ await writeFile(join(wt, "src/pending.ts"), (await readFile(join(wt, "src/pendin
 await writeFile(join(workspace, "config/code-repos.json"), JSON.stringify({ repos: [atlas] }));
 const config = JSON.parse(await readFile(join(workspace, "config/viewer.json"), "utf8"));
 config.issues.command = ["node", join(repo, "fixtures/jira/fake-acli.js")];
-config.diagrams = { command: ["npx", "-y", "draftably@0.16.0"] };
+config.diagrams = { command: ["npx", "-y", "draftably@0.17.0"] };
 await writeFile(join(workspace, "config/viewer.json"), JSON.stringify(config, null, 2));
 
 // One outbound draft, so the Outbox has something to approve.
