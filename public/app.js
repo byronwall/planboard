@@ -1,6 +1,6 @@
 import { contextScore, fuzzyChunks, searchDocuments, searchPrs, termMatch, textScore } from "./search.js";
 import { isSettled, renderActions, renderWorkGraph, showDoneToggle, workDiagnostics, workStatusIcon, workStatusLabel } from "./actions.js";
-import { applyLinkMetadata, collectLinks, documentFolder, metadataKey, openDocumentFolder, renderDock, selectDocumentSort, selectDockSource, taskDocumentSequence, toggleDocumentNested, updateDocumentBrowser } from "./dock.js";
+import { applyLinkMetadata, collectLinks, documentFolder, metadataKey, mountReferenceRow, openDocumentFolder, renderDock, selectDocumentSort, selectDockSource, taskDocumentSequence, toggleDocumentNested, updateDocumentBrowser } from "./dock.js";
 import { GLYPHS } from "./icons.js";
 import { enhanceTable } from "./table-viewer.js";
 import { savedTableFill, savedTableSize, sizeTableViewer, validTableSize } from "./table-size.js";
@@ -2089,7 +2089,9 @@ function renderDocumentDock(doc) {
   elements.chunks.insertAdjacentHTML("afterbegin", renderDock({ doc, documents: state.documents, links, body: chunk => chunkBody(doc, chunk), steps: showsSteps(doc) ? taskStepsPanel(doc, false) : "", diagrams: dockDiagrams(doc) }));
   for (const node of elements.chunks.querySelectorAll(".doc-dock-panel-body [id]")) if (node.localName !== "marker") node.removeAttribute("id");
   syncDockStuck();
-  linkMetadataSeen = {};
+  linkMetadataSeen = Object.fromEntries((doc.task?.refs || []).filter((ref) => ref.key && ref.meta).map((ref) => [ref.key, ref.meta]));
+  const dock = elements.chunks.querySelector("[data-doc-dock]");
+  if (dock) { applyLinkMetadata(dock, linkMetadataSeen); mountReferenceRow(dock); }
   loadLinkMetadata(doc);
 }
 
@@ -3225,7 +3227,7 @@ function linkTipHtml(link, meta) {
   // A commit's state is its date, which the age already says.
   const commit = key.includes("@");
   const state = meta.state && source !== "slack" ? `<span class="hover-card-state" data-tone="${commit ? "" : escapeHtml(meta.tone || "")}">${escapeHtml(commit ? "Committed" : meta.state)}${meta.when ? ` <span>${ago(meta.when)} ago</span>` : ""}</span>` : "";
-  const sourceIcon = link.querySelector(".service-icon")?.outerHTML || "";
+  const sourceIcon = link.querySelector(".service-icon")?.outerHTML || SERVICE_ICONS[source] || ""; // a PR on the references line shows its state glyph instead
   const lines = [];
   const pr = meta.pr;
   if (pr) {

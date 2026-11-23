@@ -141,7 +141,7 @@ export type TaskSummary = {
   // Roles written as an empty list: none on purpose.
   noRefs?: string[];
 };
-export type TaskReference = { role: string; ref: string; href: string; key: string; steps: string[] };
+export type TaskReference = { role: string; ref: string; href: string; key: string; steps: string[]; meta?: { title: string; state: string; tone: string; person?: string; when?: string } };
 
 export function markdownHeadingId(value: string) {
   return value
@@ -740,6 +740,20 @@ export async function loadDocument(requested: string) {
   return { ...summary, outbound, absolutePath: path.absolute, markdown: contents, chatLinks: extractChatLinks(renderedContents), chunks, nextActions, actionWarnings, work };
 }
 
+// The task's canonical references carry their cached titles and states, so the line under the dock bar paints complete
+// and never reflows when the page's own metadata lookup lands. Keys never seen before get a short wait, then come later.
+async function withReferenceMetadata<T extends { task?: { refs?: TaskReference[] } | null }>(document: T) {
+  const refs = document.task?.refs || [];
+  const keys = refs.map((ref) => ref.key).filter(Boolean);
+  if (!keys.length) return document;
+  const metadata = { ...await lookupLinkMetadata(keys, { waitMs: 250 }), ...issueTracker.aliasMetadata(keys) };
+  for (const ref of refs) {
+    const meta = metadata[ref.key];
+    if (meta) ref.meta = { title: meta.title, state: meta.state, tone: meta.tone, person: meta.person, when: meta.when };
+  }
+  return document;
+}
+
 // Names the open file, and its task ID for a task file, so the receiving agent never has to guess what was on screen.
 function sourceLines(document: Awaited<ReturnType<typeof loadDocument>>, path = document.path) {
   return `Source file: ${path}${document.task ? `\nTask: ${document.task.id} · ${document.task.title}` : ""}`;
@@ -1072,7 +1086,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
         notes: notes.length ? `My notes, also in \`${path}\`:\n\n${listed}` : "I left no notes on this session." }) });
     }
     if (request.method === "GET" && url.pathname === "/api/documents") return json(response, 200, { documents: await listDocuments(), defaultPath: todayPath() });
-    if (request.method === "GET" && url.pathname === "/api/document") return json(response, 200, await loadDocument(url.searchParams.get("path") || ""));
+    if (request.method === "GET" && url.pathname === "/api/document") return json(response, 200, await withReferenceMetadata(await loadDocument(url.searchParams.get("path") || "")));
     if (request.method === "GET" && (url.pathname === "/api/linear-image" || url.pathname === "/api/github-image")) {
       const image = url.pathname === "/api/linear-image" ? await linearImage(ROOT, url.searchParams.get("url") || "")
         : await githubImage(ROOT, url.searchParams.get("slug") || "", Number(url.searchParams.get("number")), url.searchParams.get("id") || "");

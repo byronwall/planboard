@@ -50,53 +50,143 @@ export function metadataKey(href) {
 }
 
 // The task's canonical references (`tracks:`, `resolves:`, step `(pr:)` tags) as one line under the dock bar: THE issue
-// and PRs this task is about, each with its live title and state, apart from everything the text merely mentions.
-// The links are ordinary external links, so they get the same hover card and overview click as links in the text.
+// and PRs this task is about, apart from everything the text merely mentions. The server sends each ref with its cached
+// title and state (`ref.meta`), so the line paints complete and nothing moves when the live lookup lands. A PR's state
+// is the color and shape of its mark, which never changes width; an issue's state is short text. Items that don't fit
+// drop out whole, live ones last, behind "+N"; the role labels and "+N" open every reference in full (referencePanel).
+const LIVE = (tone) => !["done", "closed"].includes(tone || "");
+const isPull = (key = "") => /^github:[^@]+#\d+$/.test(key);
+// `https://github.com/Org/repo/pull/12` reads as `repo#12`; refs written short keep their spelling.
+export function referenceLabel(ref) {
+  const pr = /^https?:/.test(ref.ref) && ref.key.match(/^github:[^/]+\/([^#@]+)#(\d+)$/);
+  return pr ? `${pr[1]}#${pr[2]}` : ref.ref;
+}
+function referenceMark(ref, tone = ref.meta?.tone) {
+  if (!isPull(ref.key)) return serviceIcon(ref.href);
+  return glyph(tone === "done" ? "git-merge" : "git-pull-request", "doc-dock-ref-glyph");
+}
+// Live work first in each role, then merged and closed; written order otherwise.
+const ordered = (items) => items.map((ref, index) => ({ ref, index })).toSorted((a, b) => (LIVE(b.ref.meta?.tone) - LIVE(a.ref.meta?.tone)) || a.index - b.index).map(({ ref }) => ref);
+const referenceGroups = (refs) => REFERENCE_ROLES.map((role) => ({ ...role, items: ordered(refs.filter((ref) => ref.role === role.key)) })).filter((group) => group.items.length);
+// A PR title that opens with its tracker key (`RAI-56056 Remove…`, `[MOD-12] Fix…`) repeats what the line already says.
+export const referenceTitle = (title = "") => title.replace(/^\[?[A-Z][A-Z0-9]+-\d+\]?\s*[:|-]?\s+/, "");
+const stateWords = (ref) => ref.meta?.state && !ref.key.includes("@") ? ref.meta.state : "";
+
 export function referenceRow(refs = []) {
   if (!refs.length) return "";
-  const groups = REFERENCE_ROLES.map((role) => ({ ...role, items: refs.filter((ref) => ref.role === role.key) })).filter((group) => group.items.length);
   const item = (ref) => {
     const steps = ref.steps.length ? `<span class="doc-dock-ref-steps">${escapeHtml(ref.steps.join(", "))}</span>` : "";
     if (!ref.href) return `<span class="doc-dock-ref is-unlinked" data-tip="${escapeHtml(`${ref.ref} isn't a reference the viewer can link; planboard lint says why.`)}"><span class="doc-dock-ref-id">${escapeHtml(ref.ref)}</span>${steps}</span>`;
-    return `<a class="doc-dock-ref markdown-external-link" href="${escapeHtml(ref.href)}" target="_blank" rel="noreferrer"${ref.key ? ` data-meta-key="${escapeHtml(ref.key)}"` : ""} data-tip="${escapeHtml(ref.ref)}">${serviceIcon(ref.href)}<span class="doc-dock-ref-id">${escapeHtml(ref.ref)}</span><span class="doc-dock-ref-title"></span><span class="doc-dock-ref-state"></span>${steps}<span class="sr-only"> (opens in a new tab)</span></a>`;
+    const tone = ref.meta?.tone || "";
+    const state = isPull(ref.key) ? "" : stateWords(ref);
+    return `<a class="doc-dock-ref markdown-external-link" href="${escapeHtml(ref.href)}" target="_blank" rel="noreferrer"${ref.key ? ` data-meta-key="${escapeHtml(ref.key)}"` : ""} data-tone="${escapeHtml(tone)}" data-tip="${escapeHtml(referenceLabel(ref))}"><span class="doc-dock-ref-mark">${referenceMark(ref)}</span><span class="doc-dock-ref-id">${escapeHtml(referenceLabel(ref))}</span><span class="doc-dock-ref-title">${escapeHtml(referenceTitle(ref.meta?.title))}</span><span class="doc-dock-ref-state" data-tone="${escapeHtml(tone)}">${escapeHtml(state)}</span>${steps}<span class="sr-only"> (opens in a new tab)</span></a>`;
   };
-  return `<div class="doc-dock-refs" aria-label="Canonical references">${groups.map((group) => `<span class="doc-dock-ref-group" data-role="${escapeHtml(group.key)}"><span class="doc-dock-ref-role" title="${escapeHtml(`${group.key}: ${group.hint}`)}">${escapeHtml(group.label)}</span>${group.items.map(item).join("")}</span>`).join("")}</div>`;
+  const groups = referenceGroups(refs);
+  return `<div class="doc-dock-refs" aria-label="Canonical references" style="anchor-name: --dock-refs">${groups.map((group) => `<span class="doc-dock-ref-group" data-role="${escapeHtml(group.key)}"><button type="button" class="doc-dock-ref-role" popovertarget="dock-refs" title="${escapeHtml(`${group.label} ${group.hint}: all ${group.items.length} in full`)}">${escapeHtml(group.label)}</button>${group.items.map(item).join("")}</span>`).join("")}<button type="button" class="doc-dock-ref-more" popovertarget="dock-refs" hidden></button></div>`;
 }
 
-// Gives the line's spare width to titles so every ID and state stays in view: live PRs that resolve the task first, then
-// the live tracking issue, then merged or closed items. A title that would get less than TITLE_MIN is left out rather
-// than shown as a stub; the hover card has every title in full. Runs when titles arrive and when the line resizes.
-const TITLE_MIN = 72, TITLE_MAX = 300, TITLE_GAP = 5;
+// Every reference in full, one row each, grouped by role, with a count of where they stand.
+export function referencePanel(refs = []) {
+  if (!refs.length) return "";
+  const groups = referenceGroups(refs);
+  const tally = (items) => {
+    const counts = new Map();
+    for (const ref of items) { const word = !ref.href ? "unlinked" : ref.meta?.tone === "done" ? (isPull(ref.key) ? "merged" : "done") : ref.meta?.tone === "closed" ? "closed" : ref.meta?.tone === "draft" ? "draft" : ref.meta ? "open" : "unknown"; counts.set(word, (counts.get(word) || 0) + 1); }
+    return ["open", "draft", "merged", "done", "closed", "unknown", "unlinked"].filter((word) => counts.has(word)).map((word) => `${counts.get(word)} ${word}`).join(" · ");
+  };
+  const row = (ref) => {
+    const tone = ref.meta?.tone || "";
+    const steps = ref.steps.length ? `<span class="dock-ref-steps">${escapeHtml(ref.steps.join(", "))}</span>` : "<span></span>";
+    const title = referenceTitle(ref.meta?.title) || (ref.href ? "" : "Can't be linked; planboard lint says why");
+    const inner = `<span class="dock-ref-mark" data-tone="${escapeHtml(tone)}">${ref.href ? referenceMark(ref) : ""}</span><span class="dock-ref-id">${escapeHtml(referenceLabel(ref))}</span><span class="dock-ref-title">${escapeHtml(title)}</span><span class="dock-ref-state" data-tone="${escapeHtml(tone)}">${escapeHtml(stateWords(ref))}</span>${steps}`;
+    return ref.href
+      ? `<a class="dock-ref-row markdown-external-link" href="${escapeHtml(ref.href)}" target="_blank" rel="noreferrer"${ref.key ? ` data-meta-key="${escapeHtml(ref.key)}"` : ""} data-tone="${escapeHtml(tone)}" data-tip="${escapeHtml(referenceLabel(ref))}">${inner}</a>`
+      : `<span class="dock-ref-row is-unlinked">${inner}</span>`;
+  };
+  return groups.map((group) => `<section class="dock-ref-group"><h3>${escapeHtml(group.label)} <span>${escapeHtml(`${group.items.length} · ${tally(group.items)}`)}</span></h3>${group.items.map(row).join("")}</section>`).join("");
+}
+
+// Fits the line to its width: whole items drop out from the end of each role (merged and closed ones sit last) until
+// "+N" fits, then the spare width goes to titles, live PRs that resolve the task first. A title that would get less
+// than TITLE_MIN is left out rather than shown as a stub; the panel and hover card have it in full.
+const TITLE_MIN = 120, TITLE_LEAD = 240, TITLE_MAX = 320, TITLE_GAP = 5;
 export function fitReferenceRow(row) {
+  const right = row.getBoundingClientRect().right;
+  if (!right) return;
+  const items = [...row.querySelectorAll(".doc-dock-ref")];
   const titles = [...row.querySelectorAll(".doc-dock-ref-title")].filter((title) => title.textContent);
-  const want = new Map(titles.map((title) => [title, Math.min(TITLE_MAX, Object.assign(title, { hidden: false }).scrollWidth)]));
+  const more = row.querySelector(".doc-dock-ref-more");
   for (const title of titles) title.hidden = true;
-  const used = Math.max(...[...row.querySelectorAll(".doc-dock-ref, .doc-dock-ref-role")].map((node) => node.getBoundingClientRect().right));
-  let spare = row.getBoundingClientRect().right - used;
-  const rank = (title) => ["done", "closed"].includes(title.parentElement.querySelector(".doc-dock-ref-state")?.dataset.tone) ? 2 : title.closest("[data-role]")?.dataset.role === "resolves" ? 0 : 1;
-  for (const title of titles.toSorted((a, b) => rank(a) - rank(b))) {
-    const give = Math.min(want.get(title), spare - TITLE_GAP);
+  for (const node of [...items, ...row.querySelectorAll(".doc-dock-ref-role")]) node.hidden = false;
+  more.hidden = true;
+  const edge = () => Math.max(...[...row.querySelectorAll(".doc-dock-ref:not([hidden]), .doc-dock-ref-role:not([hidden]), .doc-dock-ref-more:not([hidden])")].map((node) => node.getBoundingClientRect().right));
+  // Drop the last visible item of the longest role (never `keep`) until the line, with its "+N", fits in `room`.
+  const visible = () => items.filter((node) => !node.hidden);
+  let dropped = 0;
+  const dropUntil = (room, keep = null, tracksToo = true) => {
+    while (edge() > room && visible().length > 1) {
+      // The tracked issue is the last to go: it is what the task is about.
+      const groups = [...row.querySelectorAll(".doc-dock-ref-group")].map((group) => ({ tracks: group.dataset.role === "tracks", list: [...group.querySelectorAll(".doc-dock-ref:not([hidden])")].filter((node) => node !== keep) })).filter((group) => group.list.length && (tracksToo || !group.tracks));
+      if (!groups.length) return;
+      groups.toSorted((a, b) => (a.tracks - b.tracks) || b.list.length - a.list.length)[0].list.at(-1).hidden = true;
+      dropped += 1;
+      Object.assign(more, { hidden: false, textContent: `+${dropped}`, title: `${dropped} more: open every reference` });
+    }
+  };
+  dropUntil(right);
+  const rank = (title) => { const ref = title.parentElement; return !LIVE(ref.dataset.tone) ? 2 : ref.closest("[data-role]")?.dataset.role === "resolves" ? 0 : 1; };
+  const want = (title) => { title.hidden = false; title.style.maxWidth = ""; const width = Math.min(TITLE_MAX, title.scrollWidth); title.hidden = true; return width; };
+  const ranked = titles.toSorted((a, b) => rank(a) - rank(b));
+  // A line of bare IDs says little, so the best-ranked title always gets room: trailing items move behind "+N" for it.
+  const lead = ranked.find((title) => !title.parentElement.hidden);
+  if (lead && right - edge() - TITLE_GAP < Math.min(want(lead), TITLE_LEAD)) dropUntil(right - Math.min(want(lead), TITLE_LEAD) - TITLE_GAP, lead.parentElement, false);
+  // A role whose items all moved behind "+N" keeps no label.
+  for (const group of row.querySelectorAll(".doc-dock-ref-group")) group.querySelector(".doc-dock-ref-role").hidden = !group.querySelector(".doc-dock-ref:not([hidden])");
+  let spare = right - edge();
+  for (const title of ranked.filter((title) => !title.parentElement.hidden)) {
+    const give = Math.min(want(title), spare - TITLE_GAP);
     if (give < TITLE_MIN) continue;
     title.hidden = false;
     title.style.maxWidth = `${give}px`;
     spare -= give + TITLE_GAP;
   }
 }
+// A row opens its overview over the page; the panel steps aside for it.
+globalThis.document?.addEventListener("click", (event) => {
+  const row = event.target.closest?.(".dock-ref-row");
+  if (row && !event.metaKey && !event.ctrlKey && !event.shiftKey) row.closest("[popover]")?.hidePopover();
+});
 const rowObserver = globalThis.ResizeObserver && new ResizeObserver((entries) => entries.forEach((entry) => fitReferenceRow(entry.target)));
+// Called once the dock is in the page: fit before the first paint, then on every resize.
+export function mountReferenceRow(root) {
+  const row = root.querySelector(".doc-dock-refs");
+  if (!row) return;
+  fitReferenceRow(row);
+  rowObserver?.observe(row);
+}
 
 export function applyLinkMetadata(root, metadata) {
   let filled = false;
-  for (const ref of root.querySelectorAll(".doc-dock-ref[data-meta-key]")) {
+  // Only what changed is written, so a lookup that confirms the server's cached titles leaves the line untouched.
+  for (const ref of root.querySelectorAll(".doc-dock-ref[data-meta-key], .dock-ref-row[data-meta-key]")) {
     const meta = metadata[ref.dataset.metaKey];
     if (!meta) continue;
-    ref.querySelector(".doc-dock-ref-title").textContent = meta.title || "";
-    const state = ref.querySelector(".doc-dock-ref-state");
-    state.textContent = ref.dataset.metaKey.includes("@") ? "" : meta.state || "";
-    state.dataset.tone = meta.tone || "";
-    filled = true;
+    const key = ref.dataset.metaKey;
+    const tone = meta.tone || "";
+    const title = ref.querySelector(".doc-dock-ref-title, .dock-ref-title");
+    const state = ref.querySelector(".doc-dock-ref-state, .dock-ref-state");
+    const words = key.includes("@") || (isPull(key) && ref.matches(".doc-dock-ref")) ? "" : meta.state || "";
+    if (title.textContent === referenceTitle(meta.title) && state.textContent === words && ref.dataset.tone === tone) continue;
+    title.textContent = referenceTitle(meta.title);
+    state.textContent = words;
+    state.dataset.tone = tone;
+    ref.dataset.tone = tone;
+    const mark = ref.querySelector(".doc-dock-ref-mark, .dock-ref-mark");
+    if (mark && isPull(key)) { mark.innerHTML = referenceMark({ key, href: ref.href }, tone); mark.dataset.tone = tone; }
+    filled ||= ref.matches(".doc-dock-ref");
   }
   const row = filled && root.querySelector(".doc-dock-refs");
-  if (row) { fitReferenceRow(row); rowObserver?.observe(row); }
+  if (row) fitReferenceRow(row);
   for (const row of root.querySelectorAll(".dock-link[data-meta-key]")) {
     const meta = metadata[row.dataset.metaKey];
     if (!meta) continue;
@@ -529,7 +619,7 @@ export function renderDock({ doc, documents, links, body, steps = "", diagrams =
   </div>${items.filter((item) => !item.workItem).map((item) => `<div class="doc-dock-panel doc-dock-panel-${item.key}" id="dock-${item.key}" popover style="position-anchor: --dock-${item.key}" role="dialog" aria-label="${escapeHtml(item.title)}">
     ${item.bare ? "" : `<header class="doc-dock-panel-header"><span class="doc-dock-icon">${item.icon}</span><div class="doc-dock-panel-title"><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.meta)}</p></div>${item.tools || ""}${item.jump ? `<button type="button" class="doc-dock-jump" data-dock-jump="${escapeHtml(item.jump)}">Go to section <span aria-hidden="true">↓</span></button>` : ""}</header>`}
     ${LAZY_PANELS.has(item.key) ? `<div class="doc-dock-panel-body" data-lazy>${lazyPanels.set(`dock-${item.key}`, item.content) && ""}</div>` : `<div class="doc-dock-panel-body">${item.content}</div>`}
-  </div>`).join("")}</div>`;
+  </div>`).join("")}${refs ? `<div class="doc-dock-panel doc-dock-panel-refs" id="dock-refs" popover style="position-anchor: --dock-refs" role="dialog" aria-label="Canonical references"><div class="doc-dock-panel-body">${referencePanel(doc.task.refs)}</div></div>` : ""}</div>`;
 }
 
 // Links and Updates repeat the page's own content, thousands of nodes on a long task, and most visits never open them:

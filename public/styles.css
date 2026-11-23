@@ -1269,25 +1269,54 @@ button.task-status:focus-visible { outline: 2px solid var(--action); outline-off
    (fitReferenceRow in dock.js), and titles arriving from the metadata lookup never move the page. */
 .doc-dock-bar.has-refs { height: auto; flex-wrap: wrap; row-gap: 2px; padding-top: 7px; padding-bottom: 5px; }
 .doc-dock-refs { flex: 1 0 100%; order: 3; height: 24px; display: flex; align-items: center; column-gap: 2px; overflow: hidden; min-width: 0; }
-/* Groups flatten so every item shares one line; fitReferenceRow in dock.js hands out title widths. */
+/* Groups flatten so every item shares one line; fitReferenceRow in dock.js drops whole items and hands out title widths. */
 .doc-dock-ref-group { display: contents; }
-.doc-dock-ref-group + .doc-dock-ref-group > .doc-dock-ref-role { margin-left: 14px; }
-.doc-dock-ref-role { flex: none; margin-right: 4px; color: var(--muted); font-size: .72rem; font-weight: 600; cursor: default; }
+.doc-dock-ref-group + .doc-dock-ref-group > .doc-dock-ref-role { margin-left: 12px; }
+.doc-dock-ref-role, .doc-dock-ref-more { flex: none; height: 24px; display: inline-flex; align-items: center; border: 0; border-radius: 6px; background: transparent; padding: 0 6px; color: var(--muted); font-family: inherit; font-size: .72rem; font-weight: 600; line-height: 1; cursor: pointer; transition: background-color 140ms ease, color 140ms ease; }
+.doc-dock-ref-more { color: var(--body-ink); font-variant-numeric: tabular-nums; }
+.doc-dock-ref-role[hidden], .doc-dock-ref-more[hidden], .doc-dock-ref[hidden] { display: none; }
 .doc-dock-ref { flex: none; height: 24px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; padding: 0 6px; color: var(--action-ink); font-size: .78rem; text-decoration: none; white-space: nowrap; transition: background-color 140ms ease; }
-.doc-dock-ref .service-icon { flex: none; width: 13px; height: 13px; margin: 0; }
+.doc-dock-ref-mark { flex: none; width: 14px; height: 14px; display: inline-grid; place-items: center; color: var(--muted); }
+.doc-dock-ref-mark .service-icon { width: 13px; height: 13px; margin: 0; }
+.doc-dock-ref-glyph, .dock-ref-mark svg.doc-dock-ref-glyph { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+/* A PR's mark carries its state in color only, so the line never reflows when states change. */
+.doc-dock-ref[data-tone="open"] .doc-dock-ref-mark, .doc-dock-ref[data-tone="progress"] .doc-dock-ref-mark, .dock-ref-mark[data-tone="open"], .dock-ref-mark[data-tone="progress"] { color: var(--action-ink); }
+.doc-dock-ref[data-tone="done"] .doc-dock-ref-mark, .dock-ref-mark[data-tone="done"] { color: var(--success-ink); }
+.doc-dock-ref[data-tone="closed"] .doc-dock-ref-mark, .dock-ref-mark[data-tone="closed"] { color: #8a2f2f; }
+.doc-dock-ref[data-tone="draft"] .doc-dock-ref-mark, .dock-ref-mark[data-tone="draft"] { color: #7a6a8f; }
+.doc-dock-ref[data-tone="done"] .doc-dock-ref-id, .doc-dock-ref[data-tone="closed"] .doc-dock-ref-id { color: var(--body-ink); }
 .doc-dock-ref-id, .doc-dock-ref-state, .doc-dock-ref-steps { flex: none; }
-.doc-dock-ref-title { flex: none; max-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--body-ink); }
-.doc-dock-ref-title:empty, .doc-dock-ref-state:empty { display: none; }
-.doc-dock-ref-state { color: var(--muted); font-size: .72rem; font-weight: 600; }
-.doc-dock-ref-state[data-tone="open"], .doc-dock-ref-state[data-tone="progress"] { color: var(--action-ink); }
-.doc-dock-ref-state[data-tone="draft"] { color: #5d477b; }
-.doc-dock-ref-state[data-tone="done"] { color: var(--success-ink); }
-.doc-dock-ref-state[data-tone="closed"] { color: #8a2f2f; }
-.doc-dock-ref-steps { color: var(--muted); font: 600 .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.doc-dock-ref-title { flex: none; overflow: hidden; text-overflow: ellipsis; color: var(--body-ink); }
+.doc-dock-ref-title[hidden], .doc-dock-ref-title:empty, .doc-dock-ref-state:empty { display: none; }
+.doc-dock-ref-state, .dock-ref-state { color: var(--muted); font-size: .72rem; font-weight: 600; }
+.doc-dock-ref-state[data-tone="open"], .doc-dock-ref-state[data-tone="progress"], .dock-ref-state[data-tone="open"], .dock-ref-state[data-tone="progress"] { color: var(--action-ink); }
+.doc-dock-ref-state[data-tone="draft"], .dock-ref-state[data-tone="draft"] { color: #7a6a8f; }
+.doc-dock-ref-state[data-tone="done"], .dock-ref-state[data-tone="done"] { color: var(--success-ink); }
+.doc-dock-ref-state[data-tone="closed"], .dock-ref-state[data-tone="closed"] { color: #8a2f2f; }
+.doc-dock-ref-steps, .dock-ref-steps { color: var(--muted); font: 600 .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .doc-dock-ref.is-unlinked { color: var(--danger); cursor: help; }
-@media (hover: hover) { a.doc-dock-ref:hover { background: rgba(24, 33, 47, .055); } }
-a.doc-dock-ref:active { background: rgba(24, 33, 47, .09); }
-a.doc-dock-ref:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
+@media (hover: hover) { a.doc-dock-ref:hover, .doc-dock-ref-role:hover, .doc-dock-ref-more:hover { background: rgba(24, 33, 47, .055); color: var(--ink); } a.doc-dock-ref:hover { color: var(--action-ink); } }
+a.doc-dock-ref:active, .doc-dock-ref-role:active, .doc-dock-ref-more:active { background: rgba(24, 33, 47, .09); }
+a.doc-dock-ref:focus-visible, .doc-dock-ref-role:focus-visible, .doc-dock-ref-more:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
+/* Every reference in full: opens under the line, left-aligned with it. */
+.doc-dock-panel.doc-dock-panel-refs { left: anchor(left); right: auto; position-try-fallbacks: --dock-slide, --dock-fit; width: min(720px, calc(100vw - 24px)); transform-origin: top left; }
+.doc-dock-panel-refs .doc-dock-panel-body { display: grid; grid-template-columns: 30px max-content minmax(0, 1fr) max-content max-content; padding: 2px 6px 8px; }
+.dock-ref-group { display: contents; }
+.dock-ref-group h3 { grid-column: 1 / -1; margin: 0; padding: 8px 8px 4px; color: var(--muted); font-size: .72rem; font-weight: 650; }
+.dock-ref-group h3 span { font-weight: 500; font-variant-numeric: tabular-nums; }
+.dock-ref-row { min-height: 28px; display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; border-radius: 6px; padding: 0 8px; color: var(--action-ink); font-size: .8rem; text-decoration: none; transition: background-color 140ms ease; }
+.dock-ref-mark { display: inline-grid; place-items: center; width: 16px; height: 16px; color: var(--muted); }
+.dock-ref-mark .service-icon { width: 13px; height: 13px; margin: 0; }
+.dock-ref-row[data-tone="done"] .dock-ref-id, .dock-ref-row[data-tone="closed"] .dock-ref-id { color: var(--body-ink); }
+.dock-ref-id, .dock-ref-title, .dock-ref-state { padding-right: 10px; }
+.dock-ref-id { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dock-ref-title { min-width: 0; overflow: hidden; color: var(--body-ink); text-overflow: ellipsis; white-space: nowrap; }
+.dock-ref-state { white-space: nowrap; }
+.dock-ref-steps { text-align: right; white-space: nowrap; }
+.dock-ref-row.is-unlinked { color: var(--danger); }
+@media (hover: hover) { a.dock-ref-row:hover { background: rgba(24, 33, 47, .055); } }
+a.dock-ref-row:active { background: rgba(24, 33, 47, .09); }
+a.dock-ref-row:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
 
 .doc-dock-panel { position: fixed; inset: auto; top: anchor(bottom); right: anchor(right); position-try-fallbacks: flip-inline, --dock-fit; width: min(540px, calc(100vw - 24px)); max-height: min(72vh, 680px); margin: 8px 0 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 0; color: var(--ink); box-shadow: 0 24px 56px -12px rgba(24, 33, 47, .28), 0 2px 6px rgba(24, 33, 47, .06); transform-origin: top right; transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out), overlay 220ms allow-discrete, display 220ms allow-discrete; }
 /* Work opens down and to the right of its button, so the eye stays where it clicked. Short of room, it slides left only as far as the viewport edge instead of flipping to the button's other side. */
