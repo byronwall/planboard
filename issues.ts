@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { acli as sharedAcli } from "./acli.ts";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -225,10 +226,7 @@ export function createIssueTracker(root: string, codeIndex: () => Promise<{ prs:
   const linearTeams = () => settings().linear?.teams || [];
   const enabled = () => Boolean(settings().jql || linearTeams().length || settings().github);
   const linear = linearClient(root);
-  const acli: Runner = async (args) => {
-    const [command, ...rest] = settings().command;
-    return (await exec(command, [...rest, ...args], { cwd: root, maxBuffer: 64 << 20 })).stdout;
-  };
+  const acli: Runner = (args) => sharedAcli.run(settings().command, args, { cwd: root });
   // Paginated search prints one JSON array per page; join them. Asking for `key` alone returns nulls, so ask for status.
   const search = async (jql: string) => {
     const out = await acli(["jira", "workitem", "search", "--jql", jql, "--fields", "status", "--paginate", "--json"]);

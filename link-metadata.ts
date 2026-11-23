@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { acli, AcliUnavailableError } from "./acli.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -159,12 +160,14 @@ async function fetchJira(keys: string[]): Promise<Cache> {
   const tones: Record<string, Tone> = { done: "done", indeterminate: "progress", new: "open" };
   const ids = keys.map((key) => key.slice("jira:".length));
   try {
-    const { stdout } = await run("acli", ["jira", "workitem", "search", "--jql", `key in (${ids.join(",")})`, "--fields", "summary,status,assignee,priority,updated", "--paginate", "--json"], { maxBuffer: 16 << 20 });
+    const stdout = await acli.run(["acli"], ["jira", "workitem", "search", "--jql", `key in (${ids.join(",")})`, "--fields", "summary,status,assignee,priority,updated", "--paginate", "--json"], { maxBuffer: 16 << 20 });
     return Object.fromEntries(JSON.parse(stdout).map((item: any) => {
       const status = item.fields?.status;
       return [`jira:${item.key}`, { title: item.fields?.summary || "", state: status?.name || "", tone: tones[status?.statusCategory?.key] || "open", person: item.fields?.assignee?.displayName, when: item.fields?.updated, priority: item.fields?.priority?.name || "", fetchedAt: Date.now() }];
     }));
   } catch (error) {
+    // Splitting only helps find a bad key; when acli itself is down it would just spawn more calls.
+    if (error instanceof AcliUnavailableError) throw error;
     if (keys.length === 1) return {};
     const middle = Math.ceil(keys.length / 2);
     return Object.assign({}, await fetchJira(keys.slice(0, middle)), await fetchJira(keys.slice(middle)));
