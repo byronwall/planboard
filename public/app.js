@@ -21,7 +21,7 @@ import { comparePanels, inlineSvg, isDiffDiagram, sourceHtml } from "./diagram.j
 import { diagramsPageHtml, filterDiagrams } from "./diagrams-page.js";
 import { renderSetupPage } from "./setup-page.js";
 import { bindOutbound, outboundPanel } from "./outbound.js";
-import { MOVE_FILTERS, KIND_FILTERS, SORTS, GROUPS, attachScorePopover, moveCounts, movePill, promptHtml, showStepLayer, stepActionsHtml, stepBodyHtml, stepInspectorHtml, stepKey, scheduledTasks, stepListHtml, stepRowHtml, stepTitleText, stepsTableHtml, stepsToolbarHtml, stepToggleHtml, taskStepsHtml, visibleSteps } from "./steps-page.js";
+import { MOVE_FILTERS, SORTS, GROUPS, FACETS, facetMenuHtml, presetKinds, attachScorePopover, moveCounts, movePill, promptHtml, showStepLayer, stepActionsHtml, stepBodyHtml, stepInspectorHtml, stepKey, scheduledTasks, stepListHtml, stepRowHtml, stepTitleText, stepsTableHtml, stepsToolbarHtml, stepToggleHtml, taskStepsHtml, visibleSteps } from "./steps-page.js";
 import { connectWorld, fetchWorld, openPortfolio, openTaskWorld, taskCounts } from "./world.js";
 import { cachedPlans, loadPlans, openPlan, planForLink, planTitle, plansSummary, renderPlansPage, searchPlans, setPlanNotice } from "./plans.js";
 import { AGENTS, agentApp, agentName, config, issuesOn, referenceConfig, setConfig, setAgentApp } from "./config.js";
@@ -2393,7 +2393,13 @@ const stepsOutboundBody = (path) => stepsData?.drafts?.find((draft) => draft.pat
 const stepsParams = () => new URLSearchParams(location.search);
 // The Steps table's grouping is remembered per browser (a URL `&group=` wins), since it is a way of working, not a view of one moment.
 const savedStepsGroup = () => { try { return localStorage.getItem("plan-viewer:steps-group") || "none"; } catch { return "none"; } };
-const stepsFilters = { move: "you", kind: "any", hidden: false, sort: "priority", group: savedStepsGroup() };
+const stepsFilters = { move: "you", kind: "any", hidden: false, sort: "priority", group: savedStepsGroup(), q: "" };
+// The facets (Task, Kind, Size, Status, Age, Draft) and the filter box: what a sidebar click or Clear resets.
+function clearStepFilters() {
+  stepsFilters.q = "";
+  for (const name of Object.keys(FACETS)) stepsFilters[name] = [];
+}
+clearStepFilters();
 let selectedStep = "";
 
 // Callers that ask while a load is running share it (boot, the opening plan and the nav counts all ask at once).
@@ -2424,7 +2430,8 @@ async function refreshSteps() {
 function updateStepsUrl(historyMode) {
   if (historyMode === "none") return;
   const url = new URL(location.href);
-  url.search = new URLSearchParams({ view: "steps", ...(stepsFilters.move !== "you" ? { move: stepsFilters.move } : {}), ...(stepsFilters.kind !== "any" ? { kind: stepsFilters.kind } : {}), ...(stepsFilters.hidden ? { hidden: "1" } : {}), ...(stepsFilters.sort !== "priority" ? { sort: stepsFilters.sort } : {}), ...(stepsFilters.group !== "none" ? { group: stepsFilters.group } : {}), ...(selectedStep ? { select: selectedStep } : {}) });
+  url.search = new URLSearchParams({ view: "steps", ...(stepsFilters.move !== "you" ? { move: stepsFilters.move } : {}), ...(stepsFilters.kind !== "any" ? { kind: stepsFilters.kind } : {}), ...(stepsFilters.hidden ? { hidden: "1" } : {}), ...(stepsFilters.sort !== "priority" ? { sort: stepsFilters.sort } : {}), ...(stepsFilters.group !== "none" ? { group: stepsFilters.group } : {}), ...(stepsFilters.q ? { q: stepsFilters.q } : {}),
+    ...Object.fromEntries(Object.keys(FACETS).filter((name) => stepsFilters[name].length).map((name) => [name, stepsFilters[name].map((v) => v || "none").join(",")])), ...(selectedStep ? { select: selectedStep } : {}) });
   url.hash = "";
   history[historyMode === "push" ? "pushState" : "replaceState"](null, "", url);
 }
@@ -2432,7 +2439,12 @@ function updateStepsUrl(historyMode) {
 function readStepsUrl() {
   const params = stepsParams();
   stepsFilters.move = params.get("move") in MOVE_FILTERS || params.get("move") === "next" ? params.get("move") : "you";
-  stepsFilters.kind = params.get("kind") in KIND_FILTERS ? params.get("kind") : "any";
+  const kind = params.get("kind");
+  stepsFilters.kind = kind === "outbound" ? "outbound" : "any";
+  stepsFilters.q = params.get("q") || "";
+  for (const name of Object.keys(FACETS)) stepsFilters[name] = (params.get(name) || "").split(",").filter(Boolean).map((v) => v === "none" ? "" : v);
+  // An older link's kind menu choice (`&kind=decision`) opens as the Kind facet's shortcut.
+  if (kind in presetKinds && !stepsFilters.kinds.length) stepsFilters.kinds = presetKinds[kind];
   stepsFilters.hidden = params.get("hidden") === "1";
   stepsFilters.sort = params.get("sort") in SORTS ? params.get("sort") : "priority";
   stepsFilters.group = params.get("group") in GROUPS ? params.get("group") : params.get("sort") === "move" ? "move" : savedStepsGroup();
@@ -2489,10 +2501,14 @@ function renderStepsPage() {
   // Wide enough for the whole table and the inspector: open the top step beside it. Narrower, the table gets the room.
   if (!shown.some((step) => stepKey(step) === selectedStep)) selectedStep = stepsRoomForBoth() && !stepsDetailClosed && shown[0] ? stepKey(shown[0]) : "";
   const step = steps.find((candidate) => stepKey(candidate) === selectedStep);
+  // Typing in the filter box redraws the page; keep the caret where it was.
+  const typing = document.activeElement?.matches?.("[data-step-query]") ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   elements.chunks.innerHTML = `<section class="task-browser${step ? " has-detail" : ""}" aria-label="Open steps">
     <div class="task-index">${stepsToolbarHtml(steps, stepsFilters, stepsData.slots, stepsData.runs?.length || 0)}${stepsTableHtml(steps, stepsFilters, selectedStep)}</div>
     <aside class="task-detail step-detail" id="task-detail" aria-live="polite">${stepDetailHtml(step)}</aside>
   </section>`;
+  if (typing) { const input = elements.chunks.querySelector("[data-step-query]"); input.focus(); input.setSelectionRange(...typing); }
+  if (facetPop.matches(":popover-open")) renderFacetPop();
 }
 
 const stepsRoomForBoth = () => elements.chunks.clientWidth >= 1600;
@@ -2559,10 +2575,108 @@ document.addEventListener("keydown", (event) => {
   selectStepRow("");
 });
 
+// The filter box narrows as you type; Esc clears it, then leaves it. `/` focuses it from anywhere on the page.
+elements.chunks.addEventListener("input", (event) => {
+  if (state.view !== "steps" || !event.target.matches("[data-step-query]")) return;
+  stepsFilters.q = event.target.value;
+  updateStepsUrl("replace");
+  renderStepsPage();
+});
+elements.chunks.addEventListener("keydown", (event) => {
+  if (state.view !== "steps" || !event.target.matches("[data-step-query]")) return;
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (event.target.value) { event.target.value = ""; event.target.dispatchEvent(new Event("input", { bubbles: true })); } else event.target.blur(); }
+  if (event.key === "ArrowDown") { event.preventDefault(); elements.chunks.querySelector("tr[data-select-step]")?.focus(); }
+});
+document.addEventListener("keydown", (event) => {
+  if (state.view !== "steps" || event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || document.querySelector("dialog[open], :popover-open:not(.score-pop)")) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
+  event.preventDefault();
+  elements.chunks.querySelector("[data-step-query]")?.select();
+}, true);
+// ↑ ↓ move between table rows, so the filter box, the rows and the inspector work from the keyboard.
+elements.chunks.addEventListener("keydown", (event) => {
+  if (state.view !== "steps" || !event.target.matches?.("tr[data-select-step]") || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+  event.preventDefault();
+  const rows = [...elements.chunks.querySelectorAll("tr[data-select-step]")];
+  const at = rows.indexOf(event.target) + (event.key === "ArrowDown" ? 1 : -1);
+  if (at < 0) return elements.chunks.querySelector("[data-step-query]")?.focus();
+  rows[Math.min(at, rows.length - 1)].focus();
+});
+
+// One popover for every facet menu. Ticking redraws the table behind it at once, so the counts and rows stay live; it
+// stays open until Esc, a click outside, or its button again.
+const facetPop = Object.assign(document.createElement("div"), { className: "code-settings step-facet-pop", popover: "auto", ariaLabel: "Filter" });
+document.body.append(facetPop);
+let facetState = { name: "", find: "", active: 0 };
+function placeFacetPop() {
+  const button = elements.chunks.querySelector(`[data-step-facet="${facetState.name}"]`);
+  if (!button) return facetPop.hidePopover();
+  for (const other of elements.chunks.querySelectorAll("[data-step-facet]")) other.setAttribute("aria-expanded", String(other === button));
+  const r = button.getBoundingClientRect();
+  facetPop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - facetPop.offsetWidth - 8))}px`;
+  facetPop.style.top = `${r.bottom + 6}px`;
+}
+function renderFacetPop() {
+  const typing = document.activeElement?.matches?.("[data-facet-find]") ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  facetPop.innerHTML = facetMenuHtml(facetState.name, stepsData.steps, stepsFilters, facetState);
+  if (typing) { const input = facetPop.querySelector("[data-facet-find]"); input.focus(); input.setSelectionRange(...typing); }
+  facetPop.querySelector("li.is-active")?.scrollIntoView({ block: "nearest" });
+  placeFacetPop();
+}
+function openFacetPop(name) {
+  if (facetPop.matches(":popover-open") && facetState.name === name) return facetPop.hidePopover();
+  facetState = { name, find: "", active: 0 };
+  facetPop.showPopover();
+  renderFacetPop();
+  (facetPop.querySelector("[data-facet-find]") || facetPop).focus();
+}
+facetPop.tabIndex = -1;
+facetPop.addEventListener("toggle", (event) => {
+  if (event.newState !== "closed") return;
+  for (const button of elements.chunks.querySelectorAll("[data-step-facet]")) button.setAttribute("aria-expanded", "false");
+});
+function tickFacet(value, only = false) {
+  const list = stepsFilters[facetState.name];
+  stepsFilters[facetState.name] = only ? [value] : list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+  updateStepsUrl("replace");
+  renderStepsPage();
+}
+facetPop.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-facet-value]");
+  if (row) { facetState.active = [...facetPop.querySelectorAll("[data-facet-value]")].indexOf(row); return tickFacet(row.dataset.facetValue === "none" ? "" : row.dataset.facetValue, event.shiftKey); }
+  const preset = event.target.closest("[data-facet-preset]");
+  if (preset) { stepsFilters.kinds = [...presetKinds[preset.dataset.facetPreset]]; updateStepsUrl("replace"); return renderStepsPage(); }
+  if (event.target.closest("[data-facet-clear]")) { stepsFilters[facetState.name] = []; updateStepsUrl("replace"); renderStepsPage(); }
+});
+facetPop.addEventListener("input", (event) => {
+  if (!event.target.matches("[data-facet-find]")) return;
+  facetState.find = event.target.value;
+  facetState.active = 0;
+  renderFacetPop();
+});
+facetPop.addEventListener("keydown", (event) => {
+  const rows = [...facetPop.querySelectorAll("[data-facet-value]")];
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    facetState.active = Math.max(0, Math.min(rows.length - 1, facetState.active + (event.key === "ArrowDown" ? 1 : -1)));
+    rows.forEach((row, i) => row.classList.toggle("is-active", i === facetState.active));
+    rows[facetState.active]?.scrollIntoView({ block: "nearest" });
+  } else if (event.key === "Enter" && rows[facetState.active]) {
+    event.preventDefault();
+    const value = rows[facetState.active].dataset.facetValue;
+    tickFacet(value === "none" ? "" : value, event.shiftKey);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    facetPop.hidePopover();
+    elements.chunks.querySelector(`[data-step-facet="${facetState.name}"]`)?.focus();
+  }
+});
+addEventListener("resize", () => facetPop.matches(":popover-open") && placeFacetPop());
+
 function showSteps({ historyMode = "push", kind } = {}) {
   if (state.openComposer && elements.handoffPopover.matches(":popover-open") && !requestComposerClose()) return;
   closeComposer();
-  if (kind) { stepsFilters.kind = kind; stepsFilters.move = kind === "outbound" ? "all" : "you"; selectedStep = ""; }
+  if (kind) { stepsFilters.kind = kind; stepsFilters.move = kind === "outbound" ? "all" : "you"; selectedStep = ""; clearStepFilters(); }
   updateStepsUrl(historyMode);
   renderStepsPage();
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -2595,6 +2709,11 @@ elements.chunks.addEventListener("click", (event) => {
   if (state.view !== "steps") return;
   const move = event.target.closest("[data-step-move]");
   if (move) { stepsFilters.move = move.dataset.stepMove; updateStepsUrl("replace"); renderStepsPage(); return; }
+  if (event.target.closest("[data-step-clear]")) { clearStepFilters(); updateStepsUrl("replace"); return renderStepsPage(); }
+  const facet = event.target.closest("[data-step-facet]");
+  if (facet) return openFacetPop(facet.dataset.stepFacet);
+  const only = event.target.closest("[data-step-only]");
+  if (only) { stepsFilters[only.dataset.stepOnly] = [only.dataset.value === "none" ? "" : only.dataset.value]; stepsFilters.group = "none"; updateStepsUrl("replace"); renderStepsPage(); window.scrollTo({ top: 0, behavior: "instant" }); return; }
   if (event.target.closest("[data-step-close]")) return selectStepRow("");
   const next = event.target.closest("[data-step-next]");
   if (next) { const key = next.closest("[data-select-step]").dataset.selectStep; const on = next.getAttribute("aria-pressed") !== "true"; next.setAttribute("aria-pressed", String(on)); return editStepInline(key, "next", { on }); }
@@ -2619,8 +2738,7 @@ elements.chunks.addEventListener("change", (event) => {
     if (done) return editStepInline(key, "done", {}, (step) => `Marked ${step.task} ${step.id} done.`);
     return editStepInline(key, "edit", { [edit.dataset.stepEdit]: edit.value });
   }
-  if (event.target.matches("[data-step-kind]")) stepsFilters.kind = event.target.value;
-  else if (event.target.matches("[data-step-group]")) { stepsFilters.group = event.target.value; try { localStorage.setItem("plan-viewer:steps-group", stepsFilters.group); } catch {} }
+  if (event.target.matches("[data-step-group]")) { stepsFilters.group = event.target.value; try { localStorage.setItem("plan-viewer:steps-group", stepsFilters.group); } catch {} }
   else if (event.target.matches("[data-step-sort]")) stepsFilters.sort = event.target.value;
   else if (event.target.matches("[data-step-hidden]")) stepsFilters.hidden = event.target.checked;
   else return;

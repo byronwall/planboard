@@ -124,3 +124,31 @@ test('the Steps table edits in place and groups by task with the task priority i
   assert.match(grouped, /data-task-priority="p1" data-path="tasks\/TASK-0101\/TASK-0101.md" aria-pressed="true"/);
   assert.doesNotMatch(grouped, /step-task-name/);
 });
+
+test('Steps filters: words, -words, facets with counts that leave out their own facet, and highlighting', async () => {
+  const { visibleSteps, facetMenuHtml, highlightHtml, stepsTableHtml, stepsToolbarHtml } = await import('./public/steps-page.js');
+  const rows = [
+    step({ id: 'W1', task: 'TASK-0101', taskTitle: 'Roll out invites', title: 'Decide the rollout', size: 'S', status: 'open', age: 0 }),
+    step({ id: 'W2', task: 'TASK-0101', taskTitle: 'Roll out invites', title: 'Send the invite email', move: 'agent', kind: 'agent', size: 'M', status: 'open', age: 9 }),
+    step({ id: 'W3', task: 'TASK-0102', taskTitle: 'Billing fix', title: 'Retry failed invoices', move: 'agent', kind: 'agent', size: 'S', status: 'active', age: 20 }),
+  ];
+  const base = { move: 'all', kind: 'any', task: [], kinds: [], size: [], status: [], age: [], draft: [] };
+  const ids = (filters) => visibleSteps(rows, { ...base, ...filters }).map((s) => s.id);
+  assert.deepEqual(ids({ q: 'invite' }), ['W1', 'W2'], 'the task title counts as text');
+  assert.deepEqual(ids({ q: 'invite -email' }), ['W1']);
+  assert.deepEqual(ids({ task: ['TASK-0102'] }), ['W3']);
+  assert.deepEqual(ids({ size: ['S'], kinds: ['agent'] }), ['W3']);
+  assert.deepEqual(ids({ age: ['older'] }), ['W3']);
+  assert.deepEqual(ids({ move: 'you', kinds: ['agent'] }), []);
+  // The Kind menu counts every kind as if Kind were not set, so ticking a second one is possible.
+  const menu = facetMenuHtml('kinds', rows, { ...base, kinds: ['agent'] });
+  assert.match(menu, /data-facet-value="decision" aria-selected="false"[^>]*>.*?step-facet-count">1</);
+  assert.match(menu, /data-facet-value="agent" aria-selected="true"[^>]*>.*?step-facet-count">2</);
+  assert.equal(highlightHtml('Tom &amp; <code>amp</code> lamp', 'amp'), 'Tom &amp; <code><mark>amp</mark></code> l<mark>amp</mark>');
+  assert.match(stepsTableHtml(rows, { ...base, q: 'rollout' }, ''), /Decide the <mark>rollout<\/mark>/);
+  assert.match(stepsTableHtml(rows, { ...base, move: 'you', q: 'invoices' }, ''), /Show 1 under All[\s\S]*Clear filters/);
+  const tools = stepsToolbarHtml(rows, { ...base, task: ['TASK-0101'] }, 4);
+  assert.match(tools, /Task: TASK-0101/);
+  assert.match(tools, /<span>2 of 3<\/span>/);
+  assert.match(tools, /data-step-move="agent" aria-pressed="false">Agent <span>1</);
+});

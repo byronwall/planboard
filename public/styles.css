@@ -3572,6 +3572,48 @@ a.diagram-group-title:hover strong { color: var(--action-ink); }
 .step-seg span { margin-left: 3px; font-variant-numeric: tabular-nums; opacity: .8; }
 .step-kind { height: 28px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--paper); padding: 0 6px; color: var(--control-ink, #344057); font: inherit; font-size: .76rem; }
 .step-slots { margin-left: auto; color: var(--muted); font-size: .74rem; }
+/* Filters: the filter box, one menu button per facet (accent when it narrows), the shown count with Clear, and the
+   shared facet popover. Every control in the row is 28px. */
+.step-filter { height: 28px; flex: 0 1 240px; min-width: 150px; }
+.step-filter kbd { flex: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--quiet-text); font: .66rem ui-monospace, Menlo, monospace; }
+.step-filter:focus-within kbd { visibility: hidden; }
+.step-facets { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.step-facet { display: inline-flex; align-items: center; gap: 4px; height: 28px; max-width: 260px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--paper); padding: 0 6px 0 9px; color: var(--control-ink, #344057); font: inherit; font-size: .76rem; cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease; }
+.step-facet span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-facet svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; opacity: .7; }
+.step-facet.is-on { border-color: var(--action); background: var(--selected); color: var(--action-ink); }
+.step-facet[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (hover: hover) { .step-facet:hover { background: var(--hover-field); } .step-facet.is-on:hover { background: var(--selected); border-color: var(--action-deep, var(--action)); } }
+.step-facet:active { transform: scale(.97); }
+.step-shown { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; }
+.step-shown:empty { display: none; }
+.step-clear, .step-empty-clear, .step-group-only, .step-facet-clear { height: 24px; border: 0; border-radius: 6px; background: none; padding: 0 6px; color: var(--action); font: inherit; font-size: .76rem; cursor: pointer; transition: background-color 140ms ease; }
+@media (hover: hover) { .step-clear:hover, .step-empty-clear:hover, .step-group-only:hover, .step-facet-clear:hover { background: var(--hover-field); } }
+.step-arrange { display: inline-flex; gap: 4px; }
+.step-table .step-group th .step-group-only { margin-left: 8px; height: 20px; padding: 0 5px; font-size: .72rem; visibility: hidden; }
+.step-table .step-group:hover th .step-group-only, .step-table .step-group th .step-group-only:focus-visible { visibility: visible; }
+@media (hover: none) { .step-table .step-group th .step-group-only { visibility: visible; } }
+.step-col-title mark, .step-col-work mark, .step-facet-pop mark { border-radius: 2px; background: #ffe58f; color: inherit; }
+.step-facet-pop { position: fixed; inset: auto; margin: 0; width: min(460px, calc(100vw - 16px)); padding: 8px; display: none; outline: none; }
+.step-facet-pop:popover-open { display: grid; gap: 6px; }
+.step-facet-pop .code-filter { width: auto; height: 28px; }
+.step-facet-presets { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.step-facet-presets button { height: 24px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); padding: 0 7px; color: var(--control-ink, #344057); font: inherit; font-size: .74rem; cursor: pointer; }
+@media (hover: hover) { .step-facet-presets button:hover { background: var(--hover-field); } }
+.step-facet-list { max-height: min(420px, 60vh); overflow: auto; margin: 0; padding: 0; list-style: none; }
+.step-facet-list li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 26px; border-radius: 6px; padding: 3px 6px; cursor: pointer; font-size: .8rem; }
+.step-facet-list li.is-active { box-shadow: inset 0 0 0 2px rgba(49, 87, 213, .35); }
+@media (hover: hover) { .step-facet-list li:hover { background: var(--hover-field); } }
+.step-facet-list li[aria-selected="true"] { background: var(--selected); }
+.step-facet-list li[data-empty] .step-facet-text, .step-facet-list li[data-empty] .step-facet-count { color: var(--quiet-text); }
+.step-facet-list li.step-facet-none { display: block; cursor: default; color: var(--muted); }
+.step-facet-tick { width: 13px; height: 13px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--paper); }
+.step-facet-list li[aria-selected="true"] .step-facet-tick { border-color: var(--action); background: var(--action) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 8 3 3 5-6' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E") center / 11px no-repeat; }
+.step-facet-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-facet-text code { font-size: .74rem; color: var(--action-ink); }
+.step-facet-count { color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
+.step-facet-pop footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; color: var(--quiet-text); font-size: .7rem; }
+.step-facet-pop kbd { border: 1px solid var(--line); border-radius: 4px; background: var(--hover-field); padding: 0 4px; font: .66rem ui-monospace, Menlo, monospace; color: var(--muted); }
 .step-table .step-group th { padding: 14px 10px 4px; background: transparent; color: var(--label-text); font: 650 .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .035em; text-align: left; text-transform: uppercase; border-bottom: 1px solid var(--line); }
 .step-table .step-group th span { margin-left: 4px; color: var(--quiet-text); }
 .step-group-fix { margin-left: 14px; color: var(--status-waiting-ink); font: italic 400 .74rem/1.2 ui-sans-serif, -apple-system, sans-serif; letter-spacing: 0; text-transform: none; }

@@ -12,7 +12,19 @@ export const stepTitleText = (title = "") => title.split(" — ")[0]
   .replace(/\s*\(\s*\[[^\]]*\]\([^)]*\)\s*\)/g, "")
   .replace(/!?\[([^\]]*)\]\([^)]*\)/g, (_, label) => linkLabel(label))
   .replace(/\*\*([^*]+)\*\*/g, "$1");
-export const stepTitleHtml = (title) => escapeHtml(stepTitleText(title)).replace(/`([^`]+)`/g, "<code>$1</code>");
+export const stepTitleHtml = (title, query = "") => highlightHtml(escapeHtml(stepTitleText(title)).replace(/`([^`]+)`/g, "<code>$1</code>"), query);
+
+// The filter box: whitespace-separated words, all of which must appear somewhere in a step (its title, IDs, task, kind,
+// why it is where it is, an outbound draft's target); `-word` leaves out the steps that have it.
+export const queryTerms = (query = "") => query.toLowerCase().split(/\s+/).filter((term) => term && term !== "-").map((term) => term.startsWith("-") ? { not: true, term: term.slice(1) } : { not: false, term });
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Marks the filter's words in already-escaped HTML, outside tags and entities.
+export function highlightHtml(html, query = "") {
+  const terms = queryTerms(query).filter((t) => !t.not).map((t) => escapeRegex(escapeHtml(t.term)));
+  if (!terms.length) return html;
+  const re = new RegExp(`(${terms.sort((a, b) => b.length - a.length).join("|")})`, "gi");
+  return html.split(/(<[^>]*>|&[#\w]+;)/).map((part) => /^[<&]/.test(part) && part.length > 1 ? part : part.replace(re, "<mark>$1</mark>")).join("");
+}
 import { outboundIcon, outboundKindLabel, outboundPanel } from "./outbound.js";
 
 export const MOVES = {
@@ -120,18 +132,85 @@ export const GROUPS = {
 };
 export const sortSteps = (steps, sort = "priority") => [...steps].sort((a, b) => pinNext(a, b) || (SORTS[sort] || SORTS.priority)[1](a, b) || (b.score || 0) - (a.score || 0));
 
+// Facets: each narrows the table to the values ticked in its menu (`&task=TASK-0101,TASK-0102`; `none` is the empty value).
+// A menu's counts are what each value would show with every other filter applied, the next-move segment included.
+const AGE_BUCKETS = { new: "New today", week: "1–7 days", fortnight: "8–14 days", older: "Over two weeks" };
+const DRAFT_STATUS = { ready: "Ready for you", draft: "Drafting", revise: "Being revised", approved: "Sending", failed: "Didn't send" };
+const capital = (text) => text ? text[0].toUpperCase() + text.slice(1) : text;
+export const FACETS = {
+  task: { label: "Task", value: (s) => s.task || "", text: (v, s) => v ? `${v} ${s?.taskTitle || ""}` : "Saved notes", short: (v) => v || "Notes", search: true },
+  kinds: { label: "Kind", value: (s) => s.kind || "", text: (v) => v ? kindLabel(v) : "No kind yet" },
+  size: { label: "Size", value: (s) => s.size || "", text: (v) => v || "No size", order: ["S", "M", "L", ""] },
+  status: { label: "Status", value: (s) => s.status || "", text: capital, order: STATUS_ORDER },
+  age: { label: "Age", value: (s) => !s.age ? "new" : s.age <= 7 ? "week" : s.age <= 14 ? "fortnight" : "older", text: (v) => AGE_BUCKETS[v], order: Object.keys(AGE_BUCKETS) },
+  draft: { label: "Draft", value: (s) => s.draft?.fields?.status || "", text: (v) => v ? DRAFT_STATUS[v] || capital(v) : "No draft", order: Object.keys(DRAFT_STATUS), outbox: true },
+};
+// The Kind menu's shortcuts, which tick a set of kinds at once (and what an old `&kind=decision` link opens).
+export const presetKinds = { decision: ["decision", "pick-one", "pick-any"], agent: ["agent", "check-in"], byron: ["byron"], none: [""] };
+export const facetNames = (filters) => Object.keys(FACETS).filter((name) => !FACETS[name].outbox || filters.kind === "outbound");
+export const activeFilterCount = (filters) => facetNames(filters).filter((name) => filters[name]?.length).length + (queryTerms(filters.q).length ? 1 : 0);
+
+const haystack = (s) => [stepTitleText(s.title), s.id, s.task, s.taskTitle, s.kind && kindLabel(s.kind), s.reason, s.fix, s.draft?.fields?.target].filter(Boolean).join(" ").toLowerCase();
+// Every filter but the next move: the page's scope (`kind`: the Outbox is `outbound`), the facets (all but `except`) and the words.
+export function filterSteps(steps, filters = {}, except = "") {
+  const scope = KIND_FILTERS[filters.kind]?.[1] || (() => true);
+  const terms = queryTerms(filters.q);
+  const facets = facetNames(filters).filter((name) => name !== except && filters[name]?.length);
+  return steps.filter((step) => scope(step)
+    && facets.every((name) => filters[name].includes(FACETS[name].value(step)))
+    && (!terms.length || ((text) => terms.every(({ not, term }) => text.includes(term) !== not))(haystack(step))));
+}
+
 // `next` (Up next) is a filter across movers, not a mover: every step flagged `{next}`, blocked ones too.
-export function visibleSteps(steps, { move = "all", kind = "any", hidden = false } = {}) {
-  const moves = MOVE_FILTERS[move] || ORDER;
-  const test = KIND_FILTERS[kind]?.[1] || (() => true);
-  if (move === "next") return steps.filter((step) => step.next && test(step));
-  return steps.filter((step) => moves.includes(step.move) && test(step) && (hidden || move !== "all" || !HIDDEN.has(step.move)));
+const moveTest = (move, hidden) => move === "next" ? (step) => step.next
+  : ((moves) => (step) => moves.includes(step.move) && (hidden || move !== "all" || !HIDDEN.has(step.move)))(MOVE_FILTERS[move] || ORDER);
+export function visibleSteps(steps, filters = {}, except = "") {
+  return filterSteps(steps, filters, except).filter(moveTest(filters.move || "all", filters.hidden));
 }
 
 export function moveCounts(steps, kind = "any") {
   const test = KIND_FILTERS[kind]?.[1] || (() => true);
   const of = (moves) => steps.filter((step) => moves.includes(step.move) && test(step)).length;
   return { next: steps.filter((step) => step.next && test(step)).length, you: of(MOVE_FILTERS.you), agent: of(MOVE_FILTERS.agent), others: of(MOVE_FILTERS.others), flags: of(MOVE_FILTERS.flags), all: of(ORDER.filter((m) => !HIDDEN.has(m))) };
+}
+
+// One facet's menu: a find box for long lists (Task), shortcuts for Kind, then one row per value with a tick and its count.
+// Values ticked but now empty stay listed, so they can be unticked. `active` is the keyboard row.
+export function facetMenuHtml(name, steps, filters, { find = "", active = 0 } = {}) {
+  const facet = FACETS[name];
+  const picked = filters[name] || [];
+  const pool = visibleSteps(steps, filters, name);
+  // Rows keep one order while the menu is open (by how many steps each value has in the page's scope), so ticking one
+  // never moves the row under the cursor.
+  const counts = new Map(), sample = new Map(), total = new Map();
+  for (const step of filterSteps(steps, { kind: filters.kind })) { const v = facet.value(step); counts.set(v, 0); total.set(v, (total.get(v) || 0) + 1); sample.set(v, sample.get(v) || step); }
+  for (const step of pool) { const v = facet.value(step); counts.set(v, (counts.get(v) || 0) + 1); }
+  for (const v of picked) if (!counts.has(v)) counts.set(v, 0);
+  const rank = (v) => facet.order ? (facet.order.indexOf(v) + 1 || 99) : 0;
+  const needle = find.trim().toLowerCase();
+  const values = [...counts.keys()]
+    .filter((v) => !needle || facet.text(v, sample.get(v)).toLowerCase().includes(needle))
+    .sort((a, b) => rank(a) - rank(b) || (total.get(b) || 0) - (total.get(a) || 0) || String(a).localeCompare(String(b)));
+  const index = Math.max(0, Math.min(active, values.length - 1));
+  const label = (v) => {
+    const text = facet.text(v, sample.get(v));
+    if (name !== "task" || !v) return highlightHtml(escapeHtml(text), needle);
+    return `<code>${highlightHtml(escapeHtml(v), needle)}</code> ${highlightHtml(escapeHtml(text.slice(v.length + 1)), needle)}`;
+  };
+  const rows = values.map((v, i) => `<li role="option" data-facet-value="${escapeHtml(v || "none")}" aria-selected="${picked.includes(v)}"${i === index ? ' class="is-active"' : ""}${counts.get(v) ? "" : ' data-empty="true"'}><span class="step-facet-tick" aria-hidden="true"></span><span class="step-facet-text">${label(v)}</span><span class="step-facet-count">${counts.get(v)}</span></li>`).join("");
+  const presets = name === "kinds" && filters.kind !== "outbound" ? `<div class="step-facet-presets">${["decision", "agent", "byron"].map((key) => `<button type="button" data-facet-preset="${key}">${escapeHtml(KIND_FILTERS[key][0])}</button>`).join("")}</div>` : "";
+  const findBox = facet.search || counts.size > 12 ? `<label class="code-filter"><svg viewBox="0 0 24 24" aria-hidden="true">${GLYPHS.search}</svg><input type="search" data-facet-find placeholder="Find a ${facet.label.toLowerCase()}" value="${escapeHtml(find)}" spellcheck="false" autocomplete="off"></label>` : "";
+  const clear = picked.length ? `<button type="button" class="step-facet-clear" data-facet-clear>Clear ${escapeHtml(facet.label.toLowerCase())}</button>` : "";
+  return `${findBox}${presets}<ul class="step-facet-list" role="listbox" aria-multiselectable="true" aria-label="${escapeHtml(facet.label)}">${rows || `<li class="step-facet-none">No ${escapeHtml(facet.label.toLowerCase())} matches.</li>`}</ul>
+    <footer><span><kbd>↑</kbd><kbd>↓</kbd> · <kbd>Enter</kbd> tick · <kbd>⇧</kbd><kbd>Enter</kbd> only · <kbd>Esc</kbd></span>${clear}</footer>`;
+}
+
+// A facet's toolbar button names what it holds: `Task`, `Task: TASK-0136`, `Kind · 3`.
+const CHEVRON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`;
+function facetButtonHtml(name, filters) {
+  const facet = FACETS[name], picked = filters[name] || [];
+  const text = picked.length === 1 ? `${facet.label}: ${(facet.short || facet.text)(picked[0])}` : picked.length ? `${facet.label} · ${picked.length}` : facet.label;
+  return `<button type="button" class="step-facet${picked.length ? " is-on" : ""}" data-step-facet="${name}" aria-haspopup="listbox" aria-expanded="false"${picked.length > 1 ? ` title="${escapeHtml(picked.map((v) => facet.text(v)).join(", "))}"` : ""}><span>${escapeHtml(text)}</span>${CHEVRON}</button>`;
 }
 
 const pill = (step) => {
@@ -146,7 +225,7 @@ const pill = (step) => {
 // file owns read-only. The rest of the row selects the step for the inspector.
 const EDIT_KINDS = ["agent", "check-in", "decision", "byron", "pick-one", "pick-any", "do-all", ...OUTBOUND];
 const select = (field, value, options, label) => `<select class="step-cell-edit" data-step-edit="${field}" aria-label="${label}">${options.map(([v, text]) => `<option value="${escapeHtml(v)}"${v === value ? " selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select>`;
-export function stepRowCells(step, { withTask = true } = {}) {
+export function stepRowCells(step, { withTask = true, query = "" } = {}) {
   const note = noteLike(step);
   const kindCell = note ? kindLabel(step.kind) : select("kind", step.kind, [["", "—"], ...EDIT_KINDS.map((k) => [k, kindLabel(k)])], "Kind");
   const sizeCell = note ? "" : select("size", step.size, [["", "—"], ["S", "S"], ["M", "M"], ["L", "L"]], "Size");
@@ -155,36 +234,45 @@ export function stepRowCells(step, { withTask = true } = {}) {
   const next = `<button type="button" class="step-next-cell" data-step-next aria-pressed="${Boolean(step.next)}" title="${step.next ? "On Up next: click to take it off" : "Queue it as Up next"}" aria-label="Up next">●</button>`;
   return `<td class="step-col-done">${done}</td>
     <td class="step-col-score">${scoreHtml(step)}</td>
-    <td class="step-col-title"><span class="step-title-cell"${note ? "" : ' data-step-title-edit title="Double-click to edit the title"'}>${stepTitleHtml(step.title)}</span></td>
+    <td class="step-col-title"><span class="step-title-cell"${note ? "" : ' data-step-title-edit title="Double-click to edit the title"'}>${stepTitleHtml(step.title, query)}</span></td>
     <td class="step-col-next">${note ? "" : next}</td>
     <td class="step-col-move">${movePill(step)}</td>
     <td class="step-col-kind">${kindCell}</td>
     <td class="step-col-size">${sizeCell}</td>
     <td class="step-col-status">${statusCell}</td>
-    ${withTask ? `<td class="step-col-work"><button class="task-list-id" type="button" data-task-path="${escapeHtml(step.path)}">${escapeHtml(step.task || "Note")}</button><span class="step-task-name">${escapeHtml(step.taskTitle)}</span></td>` : ""}
+    ${withTask ? `<td class="step-col-work"><button class="task-list-id" type="button" data-task-path="${escapeHtml(step.path)}">${highlightHtml(escapeHtml(step.task || "Note"), query)}</button><span class="step-task-name">${highlightHtml(escapeHtml(step.taskTitle), query)}</span></td>` : ""}
     <td class="step-col-age">${step.running ? "running" : step.age ? `${step.age}d` : "new"}</td>`;
 }
-function row(step, selected, withTask) {
-  return `<tr class="step-tier-${tierOf(step.score)}" data-select-step="${escapeHtml(stepKey(step))}" aria-selected="${selected}" tabindex="0">${stepRowCells(step, { withTask })}</tr>`;
+function row(step, selected, withTask, query) {
+  return `<tr class="step-tier-${tierOf(step.score)}" data-select-step="${escapeHtml(stepKey(step))}" aria-selected="${selected}" tabindex="0">${stepRowCells(step, { withTask, query })}</tr>`;
 }
 
 // A friction group's fixes, once each in its header instead of under every row.
 const fixesHtml = (list) => [...new Set(list.map((step) => step.fix).filter(Boolean))].map((fix) => `<em class="step-group-fix">fix: ${escapeHtml(fix)}</em>`).join("");
 
-// A group's header: its name, count and top score; a task group also names the task and sets its priority in place.
-function groupHead(group, key, list, columns) {
+// A group's header: its name, count and top score; a task group also names the task and sets its priority in place. A
+// task, kind or status group offers "Only this", which narrows the table to it through that facet.
+const GROUP_FACETS = { task: "task", kind: "kinds", status: "status" };
+function groupHead(group, key, list, columns, filters = {}) {
   const first = list[0];
   const name = group === "task" ? `<button class="task-list-id" type="button" data-task-path="${escapeHtml(first.path)}">${escapeHtml(first.task || "Notes")}</button><span class="step-group-name">${escapeHtml(first.task ? first.taskTitle : "Saved notes")}</span>`
     : group === "move" ? `<span class="step-group-name">${escapeHtml(MOVES[key]?.group || key)}</span>${fixesHtml(list)}`
     : group === "kind" ? `<span class="step-group-name">${escapeHtml(key ? kindLabel(key) : "No kind yet")}</span>`
     : `<span class="step-group-name">${escapeHtml(key[0].toUpperCase() + key.slice(1))}</span>`;
   const priority = group === "task" && first.task ? `<span class="step-toggle step-group-priority" role="group" aria-label="${escapeHtml(first.task)} priority">${["p1", "p2", "p3"].map((p) => `<button type="button" data-task-priority="${p}" data-path="${escapeHtml(first.path)}" aria-pressed="${(first.priority || "p2") === p}">${p.toUpperCase()}</button>`).join("")}</span>` : "";
-  return `<tr class="step-group"><th colspan="${columns}" scope="rowgroup"><span class="step-group-line">${name}<span class="step-group-count">${list.length} ${list.length === 1 ? "step" : "steps"} · top ${Math.max(...list.map((step) => step.score || 0))}</span>${priority}</span></th></tr>`;
+  const facet = GROUP_FACETS[group];
+  const only = facet && !(filters[facet]?.length === 1 && filters[facet][0] === key) ? `<button type="button" class="step-group-only" data-step-only="${facet}" data-value="${escapeHtml(key || "none")}">Only this</button>` : "";
+  return `<tr class="step-group"><th colspan="${columns}" scope="rowgroup"><span class="step-group-line">${name}<span class="step-group-count">${list.length} ${list.length === 1 ? "step" : "steps"} · top ${Math.max(...list.map((step) => step.score || 0))}</span>${only}${priority}</span></th></tr>`;
 }
 
 export function stepsTableHtml(steps, filters, selected) {
   const shown = visibleSteps(steps, filters);
-  if (!shown.length) return `<p class="task-empty">${filters.move === "next" ? "Nothing is up next. Press Up next on a step, or Save note (Enter) in the composer." : filters.kind === "outbound" ? "Nothing waiting to go out." : "No open steps match."}</p>`;
+  if (!shown.length) {
+    const narrowed = activeFilterCount(filters);
+    const elsewhere = narrowed && filters.move !== "all" ? visibleSteps(steps, { ...filters, move: "all" }).length : 0;
+    if (narrowed) return `<p class="task-empty">No steps here match these filters.${elsewhere ? ` <button type="button" class="step-empty-clear" data-step-move="all">Show ${elsewhere} under All</button>` : ""} <button type="button" class="step-empty-clear" data-step-clear>Clear filters</button></p>`;
+    return `<p class="task-empty">${filters.move === "next" ? "Nothing is up next. Press Up next on a step, or Save note (Enter) in the composer." : filters.kind === "outbound" ? "Nothing waiting to go out." : "No open steps match."}</p>`;
+  }
   const sorted = sortSteps(shown, filters.sort);
   const group = GROUPS[filters.group]?.[1] ? filters.group : "none";
   const keyOf = GROUPS[group][1];
@@ -194,22 +282,29 @@ export function stepsTableHtml(steps, filters, selected) {
   const columns = withTask ? 10 : 9;
   return `<table class="task-table step-table${keyOf ? " is-grouped" : ""}">
     <thead><tr><th scope="col" class="step-col-done" aria-label="Done"></th><th scope="col" class="step-col-score">Priority</th><th scope="col">Step</th><th scope="col" class="step-col-next" title="Up next">Next</th><th scope="col" class="step-col-move">Move</th><th scope="col">Kind</th><th scope="col">Size</th><th scope="col">Status</th>${withTask ? '<th scope="col" class="step-col-work">Task</th>' : ""}<th scope="col" class="step-col-age">Age</th></tr></thead>
-    ${groups.map(([key, list]) => `<tbody>${keyOf ? groupHead(group, key, list, columns) : ""}${list.map((step) => row(step, stepKey(step) === selected, withTask)).join("")}</tbody>`).join("")}
+    ${groups.map(([key, list]) => `<tbody>${keyOf ? groupHead(group, key, list, columns, filters) : ""}${list.map((step) => row(step, stepKey(step) === selected, withTask, filters.q)).join("")}</tbody>`).join("")}
   </table>`;
 }
 
+// The toolbar: next-move segments (counts follow every other filter), the filter box, one menu per facet, a count of what
+// is shown with Clear when anything narrows it, then group and sort.
 export function stepsToolbarHtml(steps, filters, slots, runs = 0) {
-  const counts = moveCounts(steps, filters.kind);
+  const scoped = filterSteps(steps, filters);
+  const counts = moveCounts(scoped);
   const seg = (key, label) => `<button type="button" class="step-seg" data-step-move="${key}" aria-pressed="${filters.move === key}">${label} <span>${counts[key]}</span></button>`;
-  const running = runs;
-  const hiddenCount = steps.filter((step) => HIDDEN.has(step.move)).length;
+  const hiddenCount = scoped.filter((step) => HIDDEN.has(step.move)).length;
+  const narrowed = activeFilterCount(filters);
+  const shown = visibleSteps(steps, filters).length;
+  const scopeTotal = visibleSteps(steps, { kind: filters.kind, move: filters.move, hidden: filters.hidden }).length;
   return `<div class="task-index-tools step-tools">
     <span class="step-segs" role="group" aria-label="Next move">${seg("next", "Up next")}${seg("you", "Next move: You")}${seg("agent", "Agent")}${seg("others", "Others")}${seg("flags", "Agent flags")}${seg("all", "All")}</span>
-    <select class="step-kind" data-step-kind aria-label="Kind">${Object.entries(KIND_FILTERS).map(([key, [label]]) => `<option value="${key}"${filters.kind === key ? " selected" : ""}>${label}</option>`).join("")}</select>
-    <select class="step-kind" data-step-group aria-label="Group">${Object.entries(GROUPS).map(([key, [label]]) => `<option value="${key}"${(filters.group || "none") === key ? " selected" : ""}>${key === "none" ? "Group: none" : `Group: ${label.toLowerCase()}`}</option>`).join("")}</select>
-    <select class="step-kind" data-step-sort aria-label="Sort">${Object.entries(SORTS).map(([key, [label]]) => `<option value="${key}"${(filters.sort || "priority") === key ? " selected" : ""}>Sort: ${label.toLowerCase()}</option>`).join("")}</select>
+    <label class="code-filter step-filter"><svg viewBox="0 0 24 24" aria-hidden="true">${GLYPHS.search}</svg><input type="search" data-step-query placeholder="Filter steps" value="${escapeHtml(filters.q || "")}" spellcheck="false" autocomplete="off" aria-label="Filter steps: words to match, -word to leave out"><kbd aria-hidden="true">/</kbd></label>
+    <span class="step-facets" role="group" aria-label="Filters">${facetNames(filters).map((name) => facetButtonHtml(name, filters)).join("")}</span>
+    <span class="step-shown${narrowed ? " is-narrowed" : ""}">${narrowed ? `<span>${shown} of ${scopeTotal}</span><button type="button" class="step-clear" data-step-clear title="Clear the filter box and every menu">Clear</button>` : ""}</span>
+    <span class="step-arrange"><select class="step-kind" data-step-group aria-label="Group">${Object.entries(GROUPS).map(([key, [label]]) => `<option value="${key}"${(filters.group || "none") === key ? " selected" : ""}>${key === "none" ? "Group: none" : `Group: ${label.toLowerCase()}`}</option>`).join("")}</select>
+    <select class="step-kind" data-step-sort aria-label="Sort">${Object.entries(SORTS).map(([key, [label]]) => `<option value="${key}"${(filters.sort || "priority") === key ? " selected" : ""}>Sort: ${label.toLowerCase()}</option>`).join("")}</select></span>
     ${filters.move === "all" && hiddenCount ? `<label class="show-done"><input type="checkbox" data-step-hidden${filters.hidden ? " checked" : ""}> Show ${hiddenCount} blocked or without a kind</label>` : ""}
-    <span class="step-slots" title="Agent runs started from this page">${running} of ${slots} agent slots in use</span>
+    <span class="step-slots" title="Agent runs started from this page">${runs} of ${slots} agent slots in use</span>
   </div>`;
 }
 
