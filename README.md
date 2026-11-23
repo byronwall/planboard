@@ -163,6 +163,7 @@ Run each from the workspace (or set `PLANNING_ROOT`), as `npx planboard <command
 | `planboard move <from> <to\|TASK-NNNN>` | Moves one file and repairs every link to it. `TASK-NNNN` moves it into that task's folder; the task must exist. |
 | `planboard migrate [--write]` | Moves a workspace from the older layout (`tasks/TASK-NNNN.md` with `-assets/`, `daily/YYYY/MM/DD/`, `plans/`, `viewer.config.json`) to this one. Without `--write` it lists the moves and what to fix first. |
 | `planboard task TASK-NNNN` | Prints a task's context in compact form for an agent. |
+| `planboard refs [TASK-NNNN…\|--all]` | Lists PRs and issues missing from tasks' `tracks:` and `resolves:` lines, from the cached PR lists and link titles. |
 | `planboard next [--json]` | Prints the steps flagged Up next, for an agent thread to work through. |
 
 ### Optional integrations

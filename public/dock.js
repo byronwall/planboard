@@ -1,4 +1,5 @@
-import { diagramHref, escapeHtml, isSlackLink, parseUpdates, relativeDate, SERVICE_ICONS } from "./markdown.js";
+import { diagramHref, escapeHtml, isSlackLink, parseUpdates, relativeDate, serviceIcon, SERVICE_ICONS } from "./markdown.js";
+import { REFERENCE_ROLES } from "./actions.js";
 import { glyph } from "./icons.js";
 import { isTaskAsset, isTaskFile, taskDir, taskFile, taskOfPath, taskRelative } from "./layout.js";
 import { formatDateTime } from "./dates.js";
@@ -48,7 +49,54 @@ export function metadataKey(href) {
   return "";
 }
 
+// The task's canonical references (`tracks:`, `resolves:`, step `(pr:)` tags) as one line under the dock bar: THE issue
+// and PRs this task is about, each with its live title and state, apart from everything the text merely mentions.
+// The links are ordinary external links, so they get the same hover card and overview click as links in the text.
+export function referenceRow(refs = []) {
+  if (!refs.length) return "";
+  const groups = REFERENCE_ROLES.map((role) => ({ ...role, items: refs.filter((ref) => ref.role === role.key) })).filter((group) => group.items.length);
+  const item = (ref) => {
+    const steps = ref.steps.length ? `<span class="doc-dock-ref-steps">${escapeHtml(ref.steps.join(", "))}</span>` : "";
+    if (!ref.href) return `<span class="doc-dock-ref is-unlinked" data-tip="${escapeHtml(`${ref.ref} isn't a reference the viewer can link; planboard lint says why.`)}"><span class="doc-dock-ref-id">${escapeHtml(ref.ref)}</span>${steps}</span>`;
+    return `<a class="doc-dock-ref markdown-external-link" href="${escapeHtml(ref.href)}" target="_blank" rel="noreferrer"${ref.key ? ` data-meta-key="${escapeHtml(ref.key)}"` : ""} data-tip="${escapeHtml(ref.ref)}">${serviceIcon(ref.href)}<span class="doc-dock-ref-id">${escapeHtml(ref.ref)}</span><span class="doc-dock-ref-title"></span><span class="doc-dock-ref-state"></span>${steps}<span class="sr-only"> (opens in a new tab)</span></a>`;
+  };
+  return `<div class="doc-dock-refs" aria-label="Canonical references">${groups.map((group) => `<span class="doc-dock-ref-group" data-role="${escapeHtml(group.key)}"><span class="doc-dock-ref-role" title="${escapeHtml(`${group.key}: ${group.hint}`)}">${escapeHtml(group.label)}</span>${group.items.map(item).join("")}</span>`).join("")}</div>`;
+}
+
+// Gives the line's spare width to titles so every ID and state stays in view: live PRs that resolve the task first, then
+// the live tracking issue, then merged or closed items. A title that would get less than TITLE_MIN is left out rather
+// than shown as a stub; the hover card has every title in full. Runs when titles arrive and when the line resizes.
+const TITLE_MIN = 72, TITLE_MAX = 300, TITLE_GAP = 5;
+export function fitReferenceRow(row) {
+  const titles = [...row.querySelectorAll(".doc-dock-ref-title")].filter((title) => title.textContent);
+  const want = new Map(titles.map((title) => [title, Math.min(TITLE_MAX, Object.assign(title, { hidden: false }).scrollWidth)]));
+  for (const title of titles) title.hidden = true;
+  const used = Math.max(...[...row.querySelectorAll(".doc-dock-ref, .doc-dock-ref-role")].map((node) => node.getBoundingClientRect().right));
+  let spare = row.getBoundingClientRect().right - used;
+  const rank = (title) => ["done", "closed"].includes(title.parentElement.querySelector(".doc-dock-ref-state")?.dataset.tone) ? 2 : title.closest("[data-role]")?.dataset.role === "resolves" ? 0 : 1;
+  for (const title of titles.toSorted((a, b) => rank(a) - rank(b))) {
+    const give = Math.min(want.get(title), spare - TITLE_GAP);
+    if (give < TITLE_MIN) continue;
+    title.hidden = false;
+    title.style.maxWidth = `${give}px`;
+    spare -= give + TITLE_GAP;
+  }
+}
+const rowObserver = globalThis.ResizeObserver && new ResizeObserver((entries) => entries.forEach((entry) => fitReferenceRow(entry.target)));
+
 export function applyLinkMetadata(root, metadata) {
+  let filled = false;
+  for (const ref of root.querySelectorAll(".doc-dock-ref[data-meta-key]")) {
+    const meta = metadata[ref.dataset.metaKey];
+    if (!meta) continue;
+    ref.querySelector(".doc-dock-ref-title").textContent = meta.title || "";
+    const state = ref.querySelector(".doc-dock-ref-state");
+    state.textContent = ref.dataset.metaKey.includes("@") ? "" : meta.state || "";
+    state.dataset.tone = meta.tone || "";
+    filled = true;
+  }
+  const row = filled && root.querySelector(".doc-dock-refs");
+  if (row) { fitReferenceRow(row); rowObserver?.observe(row); }
   for (const row of root.querySelectorAll(".dock-link[data-meta-key]")) {
     const meta = metadata[row.dataset.metaKey];
     if (!meta) continue;
@@ -474,9 +522,10 @@ export function renderDock({ doc, documents, links, body, steps = "", diagrams =
   const total = linkCount + backlinks.length;
   add("links", "Links", ICONS.links, `${total}`, "Links", total ? [linkCount && `${linkCount} out`, backlinks.length && `${backlinks.length} in`].filter(Boolean).join(" · ") : "No links in or out yet", total ? linkBrowser(groups) : '<p class="dock-empty">This document doesn\'t link anywhere, and nothing links here yet.</p>', "", Boolean(total));
 
-  return `<div class="doc-dock" data-doc-dock><div class="doc-dock-bar">
+  const refs = referenceRow(doc.task?.refs);
+  return `<div class="doc-dock" data-doc-dock><div class="doc-dock-bar${refs ? " has-refs" : ""}">
     <span class="doc-dock-title" aria-hidden="true">${escapeHtml(doc.task ? `${doc.task.id} · ${doc.title}` : doc.title)}</span>
-    <div class="doc-dock-buttons" role="toolbar" aria-label="Document overview"><button type="button" class="doc-dock-button doc-dock-draft" data-dock-draft aria-haspopup="dialog" aria-controls="handoff-popover" aria-expanded="false" title="Open an agent draft for ${escapeHtml(doc.path)}"><span class="doc-dock-icon">${ICONS.draft}</span><span class="doc-dock-label">Draft</span></button>${taskId ? `<button type="button" class="doc-dock-button" data-world-task-open="${escapeHtml(taskId)}" aria-haspopup="dialog" title="Everything filed for ${escapeHtml(taskId)} on one timeline (W)"><span class="doc-dock-icon">${ICONS.world}</span><span class="doc-dock-label">World</span></button>` : ""}<span class="doc-dock-divider" aria-hidden="true"></span>${items.map((item) => `<button type="button" class="doc-dock-button" ${item.workItem ? `data-work-item="${escapeHtml(item.workItem)}" aria-haspopup="dialog" aria-controls="work-item-dialog"` : `popovertarget="dock-${item.key}" aria-expanded="false" style="anchor-name: --dock-${item.key}"`} title="${escapeHtml(item.meta)}"><span class="doc-dock-icon">${item.icon}</span><span class="doc-dock-label">${escapeHtml(item.label)}</span>${item.badge && item.badge !== "0" ? `<span class="doc-dock-badge">${escapeHtml(item.badge)}</span>` : ""}</button>`).join("")}</div>
+    <div class="doc-dock-buttons" role="toolbar" aria-label="Document overview"><button type="button" class="doc-dock-button doc-dock-draft" data-dock-draft aria-haspopup="dialog" aria-controls="handoff-popover" aria-expanded="false" title="Open an agent draft for ${escapeHtml(doc.path)}"><span class="doc-dock-icon">${ICONS.draft}</span><span class="doc-dock-label">Draft</span></button>${taskId ? `<button type="button" class="doc-dock-button" data-world-task-open="${escapeHtml(taskId)}" aria-haspopup="dialog" title="Everything filed for ${escapeHtml(taskId)} on one timeline (W)"><span class="doc-dock-icon">${ICONS.world}</span><span class="doc-dock-label">World</span></button>` : ""}<span class="doc-dock-divider" aria-hidden="true"></span>${items.map((item) => `<button type="button" class="doc-dock-button" ${item.workItem ? `data-work-item="${escapeHtml(item.workItem)}" aria-haspopup="dialog" aria-controls="work-item-dialog"` : `popovertarget="dock-${item.key}" aria-expanded="false" style="anchor-name: --dock-${item.key}"`} title="${escapeHtml(item.meta)}"><span class="doc-dock-icon">${item.icon}</span><span class="doc-dock-label">${escapeHtml(item.label)}</span>${item.badge && item.badge !== "0" ? `<span class="doc-dock-badge">${escapeHtml(item.badge)}</span>` : ""}</button>`).join("")}</div>${refs}
   </div>${items.filter((item) => !item.workItem).map((item) => `<div class="doc-dock-panel doc-dock-panel-${item.key}" id="dock-${item.key}" popover style="position-anchor: --dock-${item.key}" role="dialog" aria-label="${escapeHtml(item.title)}">
     ${item.bare ? "" : `<header class="doc-dock-panel-header"><span class="doc-dock-icon">${item.icon}</span><div class="doc-dock-panel-title"><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.meta)}</p></div>${item.tools || ""}${item.jump ? `<button type="button" class="doc-dock-jump" data-dock-jump="${escapeHtml(item.jump)}">Go to section <span aria-hidden="true">↓</span></button>` : ""}</header>`}
     ${LAZY_PANELS.has(item.key) ? `<div class="doc-dock-panel-body" data-lazy>${lazyPanels.set(`dock-${item.key}`, item.content) && ""}</div>` : `<div class="doc-dock-panel-body">${item.content}</div>`}

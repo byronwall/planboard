@@ -24,7 +24,7 @@ Put a file where its rule says. Work on a task goes in its folder; standing know
 
 ## Tasks
 
-Each task begins with this front matter (every field but `check_in` is required; `tags` is an inline list):
+Each task begins with this front matter (every field but `check_in`, `tracks` and `resolves` is required; `tags`, `tracks` and `resolves` are inline lists):
 
 ```yaml
 ---
@@ -37,12 +37,16 @@ tags: [atlas, onboarding]
 created: 2026-10-12
 updated: 2026-10-21
 check_in: 2026-10-28  # optional; the viewer's status menu writes it for waiting tasks
+tracks: [ATL-412]     # the issue that tracks this task
+resolves: [#1857]     # the PRs that resolve it
 ---
 ```
 
+`tracks` and `resolves` are the task's canonical references: THE issue it is about and THE PRs that do the work, shown on one line under the task's title. A PR that is only context (a precedent, a related fix, someone else's change) stays out of them and in the text. Write refs as the text would (`ATL-412`, `#1857`, `Orbit#12`, or a URL). Keep them current: add a PR when you open it for the task, and run `planboard refs` after a task changes; it lists PRs that carry the tracked issue's key but aren't listed, and tasks that link PRs or issues with no `resolves` or `tracks` line. A step's PR can instead be named on its line with `(pr: #1857)`, which also counts as `resolves`.
+
 Then, in any order:
 
-- `## Work breakdown`: nested bullets `- W1.2: Title [status] (after: W1.1)`. IDs are unique within the task; `after` lists prerequisites. A trailing `{next}` (alone or beside the kind and size) marks a step Up next: when asked to process what's next, run `planboard next`, work through those steps in order, and remove `next` once a step is done or handed to its own session. The same command lists open notes (`tasks/TASK-NNNN/notes/*.md` or `reference/notes/*.md` with `note: open`): each holds a request saved from the viewer with its context; work it into its source, then set `note: done` and add a dated line saying what changed. A note with `step:` is a decision, approval or direction for that step (an approval of an outbound draft authorizes sending it, plus the follow-through); its prompt says what to do. A note is not a completion: afterwards set the step's status to what actually comes next, completing it only when the work finishes it or the note says so.
+- `## Work breakdown`: nested bullets `- W1.2: Title [status] (after: W1.1)`, with an optional `(pr: #1857)` naming the PR that carries the step. IDs are unique within the task; `after` lists prerequisites. A trailing `{next}` (alone or beside the kind and size) marks a step Up next: when asked to process what's next, run `planboard next`, work through those steps in order, and remove `next` once a step is done or handed to its own session. The same command lists open notes (`tasks/TASK-NNNN/notes/*.md` or `reference/notes/*.md` with `note: open`): each holds a request saved from the viewer with its context; work it into its source, then set `note: done` and add a dated line saying what changed. A note with `step:` is a decision, approval or direction for that step (an approval of an outbound draft authorizes sending it, plus the follow-through); its prompt says what to do. A note is not a completion: afterwards set the step's status to what actually comes next, completing it only when the work finishes it or the note says so.
 - `## Next actions`: a `###` heading per action, an optional `Work item: W1.2` line, and a fenced `prompt` block an agent can carry out on its own.
 - `## Updates`: dated bullets, newest first. Write `- **2026-10-13 — Title:** What changed.` Indent continuation paragraphs and nested lists by two spaces. Keep historical entries under their existing date headings.
 - `## Chats`: links to the conversations that worked on the task.
@@ -64,6 +68,7 @@ Run these after editing and fix what they report:
 ```bash
 ../planboard/cli.ts lint    # task front matter, work breakdowns, action references
 ../planboard/cli.ts links   # broken links and unknown task IDs
+../planboard/cli.ts refs    # PRs and issues missing from tracks: and resolves:
 ```
 
 When `links` names a Slack channel or DM that `config/slack-channels.md` does not, look it up in Slack (one message of a channel shows its name; a DM shows who it is with) and add `- C…: #channel-name` or `- D…: @Person` there. Leave an entry blank rather than guessing.

@@ -213,7 +213,7 @@ export const SERVICE_ICONS = {
 // Slack permalinks open in the desktop app (see /api/open-slack) instead of leaving a dead browser tab behind.
 export const isSlackLink = (href) => /^https:\/\/[\w-]+\.slack\.com\/archives\//.test(href);
 
-function serviceIcon(href) {
+export function serviceIcon(href) {
   if (/^https:\/\/github\.com\//.test(href)) return SERVICE_ICONS.github;
   if (/^https:\/\/linear\.app\//.test(href)) return SERVICE_ICONS.linear;
   if (/^https:\/\/[\w-]+\.atlassian\.net\//.test(href)) return SERVICE_ICONS.jira;

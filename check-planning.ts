@@ -159,6 +159,7 @@ export function planningErrors(path: string, markdown: string): string[] {
     const stalled = parsed ? stalledTaskReason(parsed.task.status, actions, work) : "";
     if (stalled) errors.push(stalled);
     if (parsed) {
+      for (const ref of (parsed.task.refs || []).filter((entry) => !entry.href)) errors.push(`${ref.role} names “${ref.ref}”${ref.steps.length ? ` (step ${ref.steps.join(", ")})` : ""}, which isn't a reference the viewer can link; write #123, repo#123, a tracker key from config/viewer.json trackers, or a full URL.`);
       errors.push(...stepErrors(parsed.task, work.nodes, actions));
       const updates = chunks.find((chunk) => /^updates$/i.test(chunk.title));
       if (updates) errors.push(...parseUpdates(updates.markdown).warnings);

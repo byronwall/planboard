@@ -1,8 +1,8 @@
 #!/usr/bin/env -S node --experimental-strip-types --no-warnings=ExperimentalWarning
-// `planboard [serve|init|lint|links|move|task|next|migrate] …`, run from a planning workspace (or with PLANNING_ROOT set).
+// `planboard [serve|init|lint|links|move|task|next|refs|migrate] …`, run from a planning workspace (or with PLANNING_ROOT set).
 import { fileURLToPath } from "node:url";
 
-const COMMANDS: Record<string, string> = { serve: "server.ts", lint: "check-planning.ts", links: "check-links.ts", move: "move-doc.ts", task: "task-context.ts", init: "init-workspace.ts", next: "next-steps.ts", migrate: "migrate.ts" };
+const COMMANDS: Record<string, string> = { serve: "server.ts", lint: "check-planning.ts", links: "check-links.ts", move: "move-doc.ts", task: "task-context.ts", init: "init-workspace.ts", next: "next-steps.ts", migrate: "migrate.ts", refs: "task-refs.ts" };
 const HELP = `Usage: planboard <command> [args], run from a planning workspace (or with PLANNING_ROOT set)
 
   serve                                     open the viewer (the default)
@@ -12,6 +12,7 @@ const HELP = `Usage: planboard <command> [args], run from a planning workspace (
   move <from> <to | TASK-NNNN>              move a file and repair the links to it
   task <TASK-NNNN>                          print a task's context for an agent
   next [--json]                             print the steps flagged Up next, for an agent thread
+  refs [TASK-NNNN … | --all]                list PRs and issues missing from tasks' tracks:/resolves: lines
   migrate [--write]                         move this workspace to the current folder layout (dry run without --write)`;
 const [command = "serve", ...args] = process.argv.slice(2);
 if (["help", "--help", "-h"].includes(command)) {

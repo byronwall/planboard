@@ -6,7 +6,7 @@ import { basename, dirname, extname, join, normalize, relative, resolve, sep } f
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { parseActions, parseWorkBreakdown, stalledTaskReason } from "./public/actions.js";
+import { parseActions, parseWorkBreakdown, REFERENCE_ROLES, stalledTaskReason } from "./public/actions.js";
 import { extractChatLinks, inlineMarkdown, parseUpdates, pullRequestRefs } from "./public/markdown.js";
 import { isDiffDiagram } from "./public/diagram.js";
 import { metadataKey } from "./public/dock.js";
@@ -136,7 +136,10 @@ export type TaskSummary = {
   referencedBy?: string[];
   work?: { id: string; title: string; status: string }[];
   chatLinks?: { href: string; provider: string; label: string }[];
+  // Canonical references from the `tracks:`/`resolves:` lists and step `(pr:)` tags; `href` is empty when a ref can't be linked.
+  refs?: TaskReference[];
 };
+export type TaskReference = { role: string; ref: string; href: string; key: string; steps: string[] };
 
 export function markdownHeadingId(value: string) {
   return value
@@ -245,7 +248,38 @@ export function parseTaskDocument(path: string, markdown: string) {
   const body = markdown.slice(match[0].length).trimStart();
   const chatLinks = extractChatLinks(body);
   if (chatLinks.length) task.chatLinks = chatLinks;
+  const refs = taskReferences(path, fields, body);
+  if (refs.length) task.refs = refs;
   return { task, body };
+}
+
+// The link a written reference (`RAI-1`, `#12`, `repo#12`, a URL) renders to, found by the same detectors the reader uses.
+export function referenceHref(ref: string, path: string) {
+  if (/^https:\/\/\S+$/.test(ref)) return ref;
+  const html = inlineMarkdown(ref, path);
+  return html.match(/href="(https:[^"]+)"/)?.[1].replaceAll("&amp;", "&") || "";
+}
+
+// A task's canonical references: each role's front-matter list in order, then PRs named only by step `(pr:)` tags, which
+// count as `resolves`. One entry per link, carrying every step that names it.
+function taskReferences(path: string, fields: Map<string, string>, body: string) {
+  const refs: TaskReference[] = [];
+  const add = (role: string, ref: string, step = "") => {
+    const href = referenceHref(ref, path);
+    const key = href ? metadataKey(href) || href : "";
+    const existing = refs.find((entry) => key ? entry.key === key : entry.ref === ref);
+    if (existing) { if (step && !existing.steps.includes(step)) existing.steps.push(step); return; }
+    refs.push({ role, ref, href, key, steps: step ? [step] : [] });
+  };
+  for (const { key } of REFERENCE_ROLES) {
+    const raw = fields.get(key);
+    if (raw === undefined) continue;
+    if (!/^\[.*\]$/.test(raw)) throw new Error(`${path} must express ${key} as an inline list: ${key}: [RAI-1234, #567].`);
+    for (const ref of raw.slice(1, -1).split(",").map((item) => frontMatterValue(item)).filter(Boolean)) add(key, ref);
+  }
+  const work = body.match(/^## Work breakdown[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/im)?.[1] || "";
+  for (const node of parseWorkBreakdown(work).nodes) for (const ref of node.prs) add("resolves", ref, node.id);
+  return refs;
 }
 
 function todayPath() {

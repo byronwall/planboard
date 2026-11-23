@@ -34,12 +34,24 @@ export function parseActions(markdown, sourcePath) {
 export const STEP_SIZES = new Set(['S', 'M', 'L']);
 export const STEP_FLAGS = new Set(['option', 'recommended', 'not picked', 'next']);
 
+// A task's canonical references: front-matter lists naming THE issues and PRs the task is about, as opposed to the
+// ones its text merely mentions. Each role is one `key: [ref, ref]` line; a new role is one entry here plus its line
+// in the workspace AGENTS.md. Refs are written as the reader would write them (`RAI-1`, `#12`, `repo#12`, a URL).
+export const REFERENCE_ROLES = [
+  { key: 'tracks', label: 'Tracks', hint: 'the issue that tracks this task' },
+  { key: 'resolves', label: 'Resolves', hint: 'the PRs that resolve it' },
+];
+// A step's `(pr: ref, ref)` tag names the PRs that carry it; they count as `resolves` for the whole task.
+const STEP_PRS = /\s+\(pr:\s*([^)]*)\)/;
+
 export function parseWorkBreakdown(markdown) {
   const nodes = [], stack = [], warnings = [];
   const invalidIds = new Set();
   const allowedStatuses = 'open, active, waiting, deferred, completed';
-  for (const line of markdown.split(/\r?\n/)) {
-    // `- W1.2: Title [status] (after: W1.1) {kind, size}`; the step suffix is optional, and so is `(after:)` before the status.
+  for (const raw of markdown.split(/\r?\n/)) {
+    const prs = raw.match(STEP_PRS)?.[1].split(',').map(s => s.trim()).filter(Boolean) || [];
+    const line = raw.replace(STEP_PRS, '');
+    // `- W1.2: Title [status] (after: W1.1) {kind, size} (pr: #12)`; the step suffix is optional, and so is `(after:)` before the status.
     const match = line.match(/^(\s*)-\s+([\w.-]+):\s+(.+?)(?:\s+\(after:\s*([^)]*)\))?\s+\[(open|active|waiting|deferred|completed)\](?:\s+\(after:\s*([^)]*)\))?(?:\s+\{([^}]*)\})?\s*$/);
     if (!match) {
       const id = line.match(/^\s*-\s+([\w.-]+):/)?.[1];
@@ -60,7 +72,7 @@ export function parseWorkBreakdown(markdown) {
     const indent = space.length;
     while (stack.length && stack.at(-1).indent >= indent) stack.pop();
     const node = { id, title, status, deps: after.split(',').map(s => s.trim()).filter(Boolean), parent: stack.at(-1)?.id || '', indent,
-      kind: parts.find(part => !STEP_SIZES.has(part) && !STEP_FLAGS.has(part)) || '', size: parts.find(part => STEP_SIZES.has(part)) || '', flags: parts.filter(part => STEP_FLAGS.has(part)) };
+      kind: parts.find(part => !STEP_SIZES.has(part) && !STEP_FLAGS.has(part)) || '', size: parts.find(part => STEP_SIZES.has(part)) || '', flags: parts.filter(part => STEP_FLAGS.has(part)), prs };
     nodes.push(node); stack.push(node);
   }
   const byId = new Map(nodes.map(node => [node.id, node]));

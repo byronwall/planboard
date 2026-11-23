@@ -123,7 +123,7 @@ a.library-row:hover { background: var(--quiet-field); } /* a folder with no READ
 .document-meta > .crumb, .crumb-sep { flex: none; }
 .document-parent-link { color: inherit; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60ch; }
 .document-parent-link:hover { text-decoration: underline; }
-.document-header h1 { max-width: 820px; margin: 0; overflow-wrap: anywhere; font-size: clamp(1.5rem, 2.4vw, 2.1rem); line-height: 1.12; letter-spacing: -.025em; text-wrap: balance; }
+.document-header h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.5rem, 2.4vw, 2.1rem); line-height: 1.12; letter-spacing: -.025em; text-wrap: pretty; }
 .task-document-path { min-width: 0; max-width: 100%; }
 .copy-task-path { max-width: 100%; min-height: 28px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 5px; background: transparent; padding: 4px 6px 4px 0; color: var(--muted); text-align: left; }
 .copy-task-path code { min-width: 0; overflow-wrap: anywhere; font: .74rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: text; }
@@ -995,6 +995,8 @@ button.task-list-id:hover { text-decoration: underline; }
 @media (min-width: 1300px) {
   .document-body { display: grid; grid-template-columns: minmax(620px, 1050px) minmax(240px, 1fr); grid-template-areas: "content toc"; align-items: start; gap: clamp(24px, 3vw, 44px); }
   .chunk-stack { grid-area: content; }
+  /* The title ends where the reader column does, beside the contents rail, using the same track sizes as .document-body. */
+  .reading-pane:has(> .document-body > .chunk-nav:not([hidden])) .document-header h1 { max-width: clamp(620px, 100% - 240px - clamp(24px, 3vw, 44px), 1050px); }
   .tasks-page, .code-page, .plans-page, .diagrams-page, .setup-page { grid-area: auto; grid-column: 1 / -1; }
   .chunk-nav { grid-area: toc; container-type: inline-size; position: sticky; top: 24px; align-self: start; display: block; width: min(100%, 806px); height: calc(100vh - 48px); overflow: hidden; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 12px; background: #f8f9fb; }
   .chunk-nav-columns { height: 100%; }
@@ -1262,6 +1264,30 @@ button.task-status:focus-visible { outline: 2px solid var(--action); outline-off
 .doc-dock-badge { min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--quiet-field); padding: 0 5px; color: var(--muted); font: 700 .64rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; transition: background-color 140ms ease, color 140ms ease; }
 .doc-dock-button[aria-expanded="true"] .doc-dock-badge { background: var(--paper); color: var(--action-ink); }
 @container doc-dock (max-width: 820px) { .doc-dock-label { display: none; } .doc-dock-bar { gap: 8px; } }
+
+/* Canonical references: one fixed-height line under the dock bar. Titles get the spare width, live items first
+   (fitReferenceRow in dock.js), and titles arriving from the metadata lookup never move the page. */
+.doc-dock-bar.has-refs { height: auto; flex-wrap: wrap; row-gap: 2px; padding-top: 7px; padding-bottom: 5px; }
+.doc-dock-refs { flex: 1 0 100%; order: 3; height: 24px; display: flex; align-items: center; column-gap: 2px; overflow: hidden; min-width: 0; }
+/* Groups flatten so every item shares one line; fitReferenceRow in dock.js hands out title widths. */
+.doc-dock-ref-group { display: contents; }
+.doc-dock-ref-group + .doc-dock-ref-group > .doc-dock-ref-role { margin-left: 14px; }
+.doc-dock-ref-role { flex: none; margin-right: 4px; color: var(--muted); font-size: .72rem; font-weight: 600; cursor: default; }
+.doc-dock-ref { flex: none; height: 24px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px; padding: 0 6px; color: var(--action-ink); font-size: .78rem; text-decoration: none; white-space: nowrap; transition: background-color 140ms ease; }
+.doc-dock-ref .service-icon { flex: none; width: 13px; height: 13px; margin: 0; }
+.doc-dock-ref-id, .doc-dock-ref-state, .doc-dock-ref-steps { flex: none; }
+.doc-dock-ref-title { flex: none; max-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--body-ink); }
+.doc-dock-ref-title:empty, .doc-dock-ref-state:empty { display: none; }
+.doc-dock-ref-state { color: var(--muted); font-size: .72rem; font-weight: 600; }
+.doc-dock-ref-state[data-tone="open"], .doc-dock-ref-state[data-tone="progress"] { color: var(--action-ink); }
+.doc-dock-ref-state[data-tone="draft"] { color: #5d477b; }
+.doc-dock-ref-state[data-tone="done"] { color: var(--success-ink); }
+.doc-dock-ref-state[data-tone="closed"] { color: #8a2f2f; }
+.doc-dock-ref-steps { color: var(--muted); font: 600 .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.doc-dock-ref.is-unlinked { color: var(--danger); cursor: help; }
+@media (hover: hover) { a.doc-dock-ref:hover { background: rgba(24, 33, 47, .055); } }
+a.doc-dock-ref:active { background: rgba(24, 33, 47, .09); }
+a.doc-dock-ref:focus-visible { outline: 2px solid var(--action); outline-offset: 1px; }
 
 .doc-dock-panel { position: fixed; inset: auto; top: anchor(bottom); right: anchor(right); position-try-fallbacks: flip-inline, --dock-fit; width: min(540px, calc(100vw - 24px)); max-height: min(72vh, 680px); margin: 8px 0 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 0; color: var(--ink); box-shadow: 0 24px 56px -12px rgba(24, 33, 47, .28), 0 2px 6px rgba(24, 33, 47, .06); transform-origin: top right; transition: opacity 180ms var(--ease-out), transform 220ms var(--ease-out), overlay 220ms allow-discrete, display 220ms allow-discrete; }
 /* Work opens down and to the right of its button, so the eye stays where it clicked. Short of room, it slides left only as far as the viewport edge instead of flipping to the button's other side. */

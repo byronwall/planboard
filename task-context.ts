@@ -19,6 +19,9 @@ const out: string[] = [];
 const task = doc.task!;
 out.push(`# ${id} — ${task.title}`, `status: ${task.status} · project: ${task.project} · updated: ${task.updated}`, `file: ${doc.absolutePath}`, "", task.summary, "");
 out.push("## Outcome", section(/^outcome$/i) || "(none recorded)", "");
+// THE issue and PRs this task is about; `planboard refs` lists what these lines are missing.
+const refs = task.refs || [];
+out.push("## Canonical references", ...(refs.length ? refs.map((ref) => `- ${ref.role}: ${ref.ref}${ref.steps.length ? ` (${ref.steps.join(", ")})` : ""}${ref.href ? ` — ${ref.href}` : " — can't be linked"}`) : ["(no tracks: or resolves: lines; run planboard refs " + id + ")"]), "");
 
 const byId = new Map(doc.work.nodes.map((node) => [node.id, node]));
 const open = doc.work.nodes.filter((node) => ["open", "active", "waiting"].includes(node.status));
