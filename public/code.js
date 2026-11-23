@@ -225,9 +225,11 @@ const reviewTag = (pr) => { const [kind, label] = REVIEW[pr.reviewDecision] || [
 const PR_STATES = { MERGED: ["merged", "merge"], CLOSED: ["fail", "fail"], draft: ["draft", "draft"], CHANGES_REQUESTED: ["fail", "diff"], APPROVED: ["pass", "approved"], mine: ["review", "review"], requested: ["requested", "person"] };
 // Bots (Copilot, anything[bot]) are requested automatically, so they don't count as asking someone for a review.
 const humanReviewers = (pr) => (pr.reviewers || []).filter((login) => !/copilot|\[bot\]$/i.test(login));
+// Your GitHub login: from the Code view when it has loaded, else from the PR index a PR overlay opened elsewhere loads.
+const myLogin = () => ui.data?.me || prIndexData?.me;
 // People other than you (and the author) whose latest review approves, so a request of you reads as either the
 // approval GitHub still needs ("needed") or a request left over after someone else approved ("optional").
-const otherApprovers = (pr) => (pr.reviews || []).filter((review) => review.state === "APPROVED" && review.login !== ui.data?.me && review.login !== pr.author && !/copilot|\[bot\]$/i.test(review.login)).map((review) => review.login);
+const otherApprovers = (pr) => (pr.reviews || []).filter((review) => review.state === "APPROVED" && review.login !== myLogin() && review.login !== pr.author && !/copilot|\[bot\]$/i.test(review.login)).map((review) => review.login);
 const myRequest = (pr) => !pr.requestedOfMe || pr.state === "MERGED" || pr.state === "CLOSED" ? "" : pr.reviewDecision === "APPROVED" ? "optional" : otherApprovers(pr).length ? "needed" : "";
 const prState = (pr) => {
   const people = humanReviewers(pr);
@@ -472,7 +474,7 @@ function prsBody() {
 // Open PRs as stacks sorted into lanes by who moves next, like a hand-drawn "what lands this week" diagram.
 // A real name reads better than a handle: the person's name when it has a space, else their longest known full name.
 const personName = (login) => {
-  if (login === ui.data.me) return "you";
+  if (login === myLogin()) return "you";
   const person = personFor(login);
   const full = (person?.keys || []).filter((key) => key.startsWith("n:") && key.includes(" ") && !key.includes("@")).map((key) => key.slice(2)).sort((a, b) => b.length - a.length)[0];
   return person?.name?.includes(" ") ? person.name : full ? full.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase()) : person?.name || login.replace(/^app\//, "");
@@ -495,7 +497,7 @@ function nextStep(pr) {
 const IDLE = 14 * DAY;
 // Each move: label, glyph, the button that drafts it for the whole section, and the prompt's ask. Order is board order.
 const MOVES = {
-  review: { label: "Review", glyph: "eye", verb: "Nudge", ask: (who) => who === ui.data.me ? reviewAsk() : `These PRs wait on review from ${personName(who)}. For each, say how long the request has waited, and draft a short nudge to them or propose another reviewer who knows the touched files. Send nothing.` },
+  review: { label: "Review", glyph: "eye", verb: "Nudge", ask: (who) => who === myLogin() ? reviewAsk() : `These PRs wait on review from ${personName(who)}. For each, say how long the request has waited, and draft a short nudge to them or propose another reviewer who knows the touched files. Send nothing.` },
   merge: { label: "Merge", glyph: "circle-check", verb: "Check & merge", ask: () => "These PRs are approved. For each, confirm it is still mergeable with green checks and up to date with its base, then list them in merge order, bottom of each stack first. Do not merge anything." },
   fix: { label: "Fix first", glyph: "triangle-alert", verb: "Fix all", ask: () => "Each of these PRs needs a fix before anyone can review or merge it; the step is on its line. Do each step in the PR's worktree (merge its base in, fix the failing checks, or answer the requested changes), push, and report what changed. Stop and ask when a conflict needs a judgment call." },
   none: { label: "Pick a reviewer", glyph: "user", verb: "Pick reviewers", ask: () => "None of these PRs has a human reviewer. For each, propose one reviewer with a one-line reason, from the repository's code owners and the people who recently reviewed or changed the touched files. Draft the review requests; request nothing yet." },
@@ -505,7 +507,7 @@ const MOVES = {
 // Your own review section runs `code.reviewMove` (a review gate that tries to break each PR, say) instead of nudging
 // yourself; without one it asks for a plain review. Other people's review sections keep Nudge.
 const reviewMove = () => config().code.reviewMove || {};
-const moveVerb = (move, column) => move === "review" && column === ui.data.me ? reviewMove().label || "Review all" : MOVES[move].verb;
+const moveVerb = (move, column) => move === "review" && column === myLogin() ? reviewMove().label || "Review all" : MOVES[move].verb;
 const reviewAsk = () => reviewMove().ask || "Review each of these PRs; my review is requested on all of them. Start with the bottom of any stack.";
 const glyph = (name) => `<svg class="code-icon" viewBox="0 0 24 24" aria-hidden="true">${GLYPHS[name]}</svg>`;
 function placeOf(stack) {
@@ -513,7 +515,7 @@ function placeOf(stack) {
   if (stack.every((item) => Date.now() - Date.parse(prWhen(item)) > IDLE)) return ["", "idle"];
   if (pr.draft) return [`draft:${pr.author}`, "draft"];
   const [tone] = nextStep(pr);
-  if (tone === "mine") return [ui.data.me, "review"];
+  if (tone === "mine") return [myLogin(), "review"];
   if (tone === "wait") return [humanReviewers(pr)[0], "review"];
   return [pr.author, tone];
 }
@@ -532,7 +534,7 @@ const sizeBar = (pr) => {
 // Who moves next on a PR: a reviewer while it waits on review (the column's person when they are one), else its author.
 const actorOf = (pr, column) => {
   const [tone] = nextStep(pr);
-  if (tone === "mine") return ui.data.me;
+  if (tone === "mine") return myLogin();
   if (tone !== "wait" || pr.reviewDecision === "APPROVED") return pr.author;
   const reviewers = humanReviewers(pr);
   return reviewers.includes(column) ? column : reviewers[0] || pr.author;
@@ -574,7 +576,7 @@ const chainHtml = (stack, column) => stack.length > 1
 // One section's header: its move, count and the button that drafts the move for every PR in it.
 const moveHead = (move, stacks, column) => {
   const count = stacks.reduce((sum, stack) => sum + stack.length, 0);
-  const label = move === "review" ? (column === ui.data.me ? "Your review" : "Their review") : MOVES[move].label;
+  const label = move === "review" ? (column === myLogin() ? "Your review" : "Their review") : MOVES[move].label;
   return `<h4>${glyph(MOVES[move].glyph)}<span class="code-lane-label">${label}</span><span class="code-lane-count">${count}</span><button type="button" class="code-lane-move" data-board-move="${move}" data-board-column="${escapeHtml(column)}">${escapeHtml(moveVerb(move, column))}</button></h4>`;
 };
 
@@ -613,9 +615,9 @@ function columnRelation(column) {
   if (column.login.startsWith("draft:")) return `${column.count} not ready for review yet`;
   const reviews = prs("review");
   const own = ["merge", "fix", "none"].reduce((sum, section) => sum + prs(section).length, 0);
-  const mine = column.login === ui.data.me;
+  const mine = column.login === myLogin();
   const parts = [];
-  if (reviews.length) parts.push(mine ? `${reviews.length} waiting on your review` : reviews.every((pr) => pr.author === ui.data.me) ? `Reviewing ${reviews.length} of yours` : `Reviewing ${reviews.length}`);
+  if (reviews.length) parts.push(mine ? `${reviews.length} waiting on your review` : reviews.every((pr) => pr.author === myLogin()) ? `Reviewing ${reviews.length} of yours` : `Reviewing ${reviews.length}`);
   if (own) parts.push(mine ? `${own} of yours to move` : `${own} of their own to move`);
   return parts.join(" · ");
 }
@@ -625,13 +627,13 @@ function stacksBody(prs) {
   const idle = columns.get("");
   columns.delete("");
   // You first, then whoever has the most to move, then drafts.
-  const rank = (column) => column.login === ui.data.me ? 0 : column.login.startsWith("draft:") ? 2 : 1;
+  const rank = (column) => column.login === myLogin() ? 0 : column.login.startsWith("draft:") ? 2 : 1;
   const order = [...columns.values()].sort((a, b) => rank(a) - rank(b) || b.count - a.count || personName(a.login).localeCompare(personName(b.login)));
   const moveOrder = Object.keys(MOVES);
   const board = order.map((column) => {
     const draftOf = column.login.startsWith("draft:") && column.login.slice(6);
     const who = draftOf || column.login;
-    const name = draftOf ? (draftOf === ui.data.me ? "Your drafts" : `${personName(draftOf)}'s drafts`) : column.login === ui.data.me ? "You" : personName(column.login);
+    const name = draftOf ? (draftOf === myLogin() ? "Your drafts" : `${personName(draftOf)}'s drafts`) : column.login === myLogin() ? "You" : personName(column.login);
     const sections = [...column.sections.entries()].sort(([a], [b]) => moveOrder.indexOf(a) - moveOrder.indexOf(b))
       .map(([move, stacks]) => `<section class="code-lane" data-move="${move}">${moveHead(move, stacks, column.login)}${stacks.map((stack) => chainHtml(stack, column.login)).join("")}</section>`).join("");
     return `<section class="code-board-col"><h3>${avatar(who)}<span class="code-board-who"><b>${escapeHtml(name)}</b><small>${escapeHtml(columnRelation(column))}</small></span></h3>${sections}</section>`;
@@ -839,7 +841,7 @@ function repoKeys(event) {
 // ---------- authors ----------
 // The author filter spans both tabs. Its key is a GitHub login, or the git name of a commit whose login is unknown.
 const authorOf = (item) => item.sha ? item.login || item.author : item.author;
-const authorName = (key) => key === ui.data.me ? "you" : key.replace(/^app\//, "");
+const authorName = (key) => key === myLogin() ? "you" : key.replace(/^app\//, "");
 const authorFilter = (item) => !ui.authors.size || ui.authors.has(authorOf(item));
 
 // A row's avatar (and name, when `labelled`) filters to that author on click.
@@ -861,7 +863,7 @@ function authorStats() {
     if (item.sha && item.author !== key) entry.names.add(item.author);
   }
   for (const key of ui.authors) add(key, /\s/.test(key) ? "" : key);
-  return [...stats.values()].sort((a, b) => (b.key === ui.data.me) - (a.key === ui.data.me) || b.count - a.count || b.latest - a.latest);
+  return [...stats.values()].sort((a, b) => (b.key === myLogin()) - (a.key === myLogin()) || b.count - a.count || b.latest - a.latest);
 }
 
 function authorTrigger() {
@@ -871,12 +873,12 @@ function authorTrigger() {
   const marks = picked.length ? `<i class="code-avatar-stack">${picked.slice(0, 3).map((entry) => avatar(entry.login, entry.key)).join("")}</i>` : icon("person");
   return `<button type="button" class="code-branch-trigger code-author-trigger${picked.length ? " is-active" : ""}" popovertarget="code-authors" data-code-author-trigger>${marks}<span class="code-trigger-label">${escapeHtml(label)}</span><span class="code-count">${stats.length}</span><kbd>A</kbd></button>`
     // Mine is the one-click "just my work / everyone's" switch; Clear stays for any other pick.
-    + (!ui.data.me ? "" : `<div class="code-segment code-mine"><button type="button" data-code-mine aria-pressed="${mineOnly()}" data-tip="${mineOnly() ? "Show everyone's" : "Show only yours"}  (M)">Mine</button></div>`)
+    + (!myLogin() ? "" : `<div class="code-segment code-mine"><button type="button" data-code-mine aria-pressed="${mineOnly()}" data-tip="${mineOnly() ? "Show everyone's" : "Show only yours"}  (M)">Mine</button></div>`)
     + (picked.length && !mineOnly() ? `<button type="button" class="code-more" data-code-author-clear>Clear</button>` : "");
 }
-const mineOnly = () => ui.authors.size === 1 && ui.authors.has(ui.data.me);
+const mineOnly = () => ui.authors.size === 1 && ui.authors.has(myLogin());
 function toggleMine() {
-  ui.authors = mineOnly() ? new Set() : new Set([ui.data.me]);
+  ui.authors = mineOnly() ? new Set() : new Set([myLogin()]);
   syncUrl();
   render({ animate: true });
   renderAuthorList();
@@ -902,7 +904,7 @@ function renderAuthorList() {
     const aka = [...entry.names].filter((name) => name.toLowerCase() !== entry.key.toLowerCase()).slice(0, 2).join(", ");
     return `<li data-author-row="${escapeHtml(entry.key)}" aria-selected="${index === ui.authorActive}">
       <input type="checkbox" tabindex="-1" ${ui.authors.has(entry.key) ? "checked" : ""} aria-label="Show ${escapeHtml(entry.key)}">
-      <span class="code-author-name">${avatar(entry.login, entry.key)}<b>${escapeHtml(authorName(entry.key))}</b>${entry.key === ui.data.me ? `<span class="code-muted">${escapeHtml(entry.key)}</span>` : ""}${aka ? `<span class="code-muted">${escapeHtml(aka)}</span>` : ""}</span>
+      <span class="code-author-name">${avatar(entry.login, entry.key)}<b>${escapeHtml(authorName(entry.key))}</b>${entry.key === myLogin() ? `<span class="code-muted">${escapeHtml(entry.key)}</span>` : ""}${aka ? `<span class="code-muted">${escapeHtml(aka)}</span>` : ""}</span>
       <span class="code-count" data-tip="${entry.count} ${noun}">${entry.count}</span>${entry.latest ? `<span class="code-heat-${heat(entry.latest)}">${when(entry.latest)}</span>` : "<span></span>"}
       <button type="button" class="code-more" data-author-only="${escapeHtml(entry.key)}">Only</button></li>`;
   }).join("") : `<li class="code-muted">No author matches.</li>`;
