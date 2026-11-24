@@ -35,10 +35,10 @@ function fit(frame) {
   if (!fitted) {
     for (const link of table.querySelectorAll("td a")) if (link.textContent.length - (link.querySelector(".sr-only")?.textContent.length || 0) > LONG_TOKEN) wrapLink(link);
     for (const code of table.querySelectorAll("td code")) if (code.textContent.length > LONG_TOKEN) code.classList.add("is-wrap");
-    fitted = { measure: measure(table), avail: 0 };
+    fitted = { measure: measure(table), avail: 0, recent: [], band: null };
     fits.set(frame, fitted);
   }
-  const avail = frame.clientWidth;
+  const avail = settle(fitted, frame.clientWidth);
   if (avail !== fitted.avail) {
     fitted.avail = avail;
     const widths = distribute(fitted.measure, avail);
@@ -51,6 +51,25 @@ function fit(frame) {
     frame.classList.toggle("is-wide", total > avail + 1);
   }
   cap(frame, table);
+}
+
+// A fit can change the frame's own width: the table's height shows or hides a scrollbar, its class moves the layout
+// around it. When that makes the frame bounce between two widths (A, B, A within a second), every fit would undo the
+// last one and the columns would flash on every frame. The frame then fits at the narrower width and stays there until
+// its width leaves that pair, which only a real resize does.
+const BOUNCE_MS = 1000;
+function settle(fitted, width) {
+  const { band } = fitted;
+  if (band && width >= band.low && width <= band.high) return band.low;
+  fitted.band = null;
+  const now = performance.now();
+  if (fitted.recent.at(-1)?.width === width) return width;
+  const recent = (fitted.recent = [...fitted.recent.filter((entry) => now - entry.at < BOUNCE_MS), { width, at: now }].slice(-3));
+  if (recent.length === 3 && recent[0].width === width && recent[1].width !== width) {
+    fitted.band = { low: Math.min(width, recent[1].width), high: Math.max(width, recent[1].width) };
+    return fitted.band.low;
+  }
+  return width;
 }
 
 // Links and code under LONG_TOKEN characters never break. A longer link title may wrap inside its cell, but its last
