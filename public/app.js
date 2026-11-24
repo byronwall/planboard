@@ -1280,6 +1280,38 @@ function openDiagram(path, trigger = null) {
   openImageViewerAt(items, index, trigger);
 }
 
+// The dock's Diagrams panel opens the viewer on every diagram it counts, not only the page's. The rail groups them by
+// the document that embeds them: this page first, then the task's other documents by title, then the ones no document
+// embeds. A diagram embedded in several documents sits under the first of those.
+const NOT_EMBEDDED = "Not embedded";
+function openDiagramSet(links, trigger) {
+  const here = state.document?.path || "";
+  const known = new Map((state.diagrams || []).map((diagram) => [diagram.path, diagram]));
+  const titleOf = (path) => state.documents.find((doc) => doc.path === path)?.title || taskRelative(path);
+  const homeOf = (path, embeddedHere) => {
+    if (embeddedHere) return here;
+    const docs = (known.get(path)?.embeddedIn || []).filter((doc) => doc !== here);
+    return docs.toSorted((a, b) => titleOf(a).localeCompare(titleOf(b)))[0] || "";
+  };
+  const items = links.map((link) => {
+    const path = link.dataset.diagramLink;
+    const home = homeOf(path, !link.querySelector(".dock-diagram-note"));
+    return {
+      trigger: link,
+      diagram: path,
+      src: link.querySelector("img")?.getAttribute("src") || diagramHref(path),
+      alt: link.querySelector(".dock-diagram-title")?.textContent.trim() || path.split("/").pop().replace(/\.draft$/, ""),
+      home,
+      group: !home ? NOT_EMBEDDED : home === here ? "This page" : titleOf(home),
+    };
+  });
+  const rank = (item) => (item.home === here ? "0" : item.home ? `1${item.group}` : "2");
+  items.sort((a, b) => rank(a).localeCompare(rank(b)));
+  // One group needs no heading.
+  if (new Set(items.map((item) => item.group)).size < 2) for (const item of items) item.group = "";
+  openImageViewerAt(items, items.findIndex((item) => item.trigger === trigger), trigger);
+}
+
 function openImageViewerAt(items, index, trigger) {
   if (index < 0) return;
   imageViewerState.railQuery = "";
@@ -1335,7 +1367,7 @@ function imageViewerRail() {
   const { items, index: current } = imageViewerState;
   let group = null;
   const rows = items.map((item, index) => {
-    const heading = item.group && item.group !== group ? `<div class="image-viewer-rail-group" data-rail-group="${escapeHtml(item.group)}">${escapeHtml(item.group)}</div>` : "";
+    const heading = item.group && item.group !== group ? `<div class="image-viewer-rail-group" data-rail-group="${escapeHtml(item.group)}" title="${escapeHtml(item.group)}">${escapeHtml(item.group)}</div>` : "";
     group = item.group;
     return `${heading}<button class="image-viewer-thumbnail${item.diagram ? " is-diagram" : ""}" type="button" data-image-index="${index}" data-rail-text="${escapeHtml(`${item.alt} ${item.group || ""} ${item.diagram || ""}`.toLowerCase())}" data-rail-of="${escapeHtml(item.group || "")}" aria-current="${index === current}" aria-label="View image ${index + 1}: ${escapeHtml(item.alt)}"><span class="image-viewer-thumb"><img src="${escapeHtml(item.src)}" alt="" loading="lazy" decoding="async"></span><span class="image-viewer-thumb-title">${escapeHtml(item.alt)}</span></button>`;
   }).join("");
@@ -3488,7 +3520,9 @@ elements.chunks.addEventListener("click", (event) => {
   const diagramLink = event.target.closest("a[data-diagram-link]");
   if (diagramLink && !(event.metaKey || event.ctrlKey || event.shiftKey)) {
     event.preventDefault();
-    openDiagram(diagramLink.dataset.diagramLink, diagramLink);
+    const set = diagramLink.closest(".dock-diagrams");
+    if (set) openDiagramSet([...set.querySelectorAll("a[data-diagram-link]")], diagramLink);
+    else openDiagram(diagramLink.dataset.diagramLink, diagramLink);
     return;
   }
   const graphExpand = event.target.closest("[data-graph-expand]");

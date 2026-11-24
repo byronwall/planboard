@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { execFile, spawn } from "node:child_process";
 import { readFileSync, unwatchFile, watch, watchFile, type FSWatcher } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, posix, relative, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -24,7 +24,7 @@ import { linearImage } from "./linear.ts";
 import { config, setConfig, withNote } from "./public/config.js";
 import { customizePrompt, fillPrompt, listPrompts, resetPrompt } from "./prompts.ts";
 import { filePrompt, firstTaskPrompt, integrationPrompt, promptEditPrompt, routinePrompt, listConfigFiles, probeIntegrations, readConfigFile, readRawConfig, setupData, settingMeanings, listSettings, settingPrompt, writeSetting, CONFIG_DOC } from "./setup.ts";
-import { CONFIG_FILE, DOC_ROOTS, dailyFile, isTaskAsset, isTaskFile, taskFile, taskOfPath } from "./public/layout.js";
+import { CONFIG_FILE, DOC_ROOTS, dailyFile, isTaskAsset, isTaskFile, taskDir, taskFile, taskOfPath } from "./public/layout.js";
 import { applyRule, closeNote, followUpNote, saveLaunchNote, loadSteps, markStepDone, pickChoice, planMentions, runStatement, saveNote, setStepNext, setTaskPriority, startStep } from "./steps.ts";
 import { editStep } from "./steps.ts"; // the Steps table's inline edits
 import { approveOutbound, draftFromText, dropOutbound, listOutbound, markOutboundSent, outboundFields, sendBackOutbound, stripFrontMatter } from "./outbound.ts";
@@ -559,7 +559,20 @@ export async function listDiagrams() {
   const diagrams = await Promise.all(paths.map(async (path) => {
     const [contents, { mtimeMs }] = await Promise.all([readFile(join(ROOT, path), "utf8"), stat(join(ROOT, path))]);
     const quoted = (keyword: string) => contents.match(new RegExp(`^\\s*${keyword}\\s+"((?:[^"\\\\]|\\\\.)*)"`, "m"))?.[1]?.replace(/\\(.)/g, "$1") || "";
-    return { path, title: quoted("diagram") || basename(path, ".draft"), subtitle: quoted("subtitle"), modified: mtimeMs, task: taskOfPath(path) };
+    return { path, title: quoted("diagram") || basename(path, ".draft"), subtitle: quoted("subtitle"), modified: mtimeMs, task: taskOfPath(path), embeddedIn: [] as string[] };
+  }));
+  // Which of its task's documents embed each diagram, so a viewer opened on every diagram can group them by document.
+  const byPath = new Map(diagrams.map((diagram) => [diagram.path, diagram]));
+  const tasks = [...new Set(diagrams.map((diagram) => diagram.task).filter(Boolean))];
+  await Promise.all(tasks.map(async (task) => {
+    for (const doc of (await walkDocuments(taskDir(task), [".md"])).sort()) {
+      const contents = await readFile(join(ROOT, doc), "utf8");
+      for (const [, ref] of contents.matchAll(/!\[[^\]]*\]\(<?([^)\s>]+\.draft)>?(?:\s+"[^"]*")?\)/g)) {
+        const target = /^(tasks|daily|reference)\//.test(ref) ? ref : posix.normalize(posix.join(posix.dirname(doc), ref.replaceAll("%20", " ")));
+        const diagram = byPath.get(target);
+        if (diagram && !diagram.embeddedIn.includes(doc)) diagram.embeddedIn.push(doc);
+      }
+    }
   }));
   return diagrams.sort((a, b) => b.modified - a.modified);
 }

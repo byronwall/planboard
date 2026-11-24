@@ -339,6 +339,7 @@ test("the Diagrams page lists every .draft with its title and owning task", asyn
   const flow = diagrams.find((diagram) => diagram.path === "tasks/TASK-0001/flow.draft");
   assert.equal(flow?.title, "Fixture flow");
   assert.equal(flow?.task, "TASK-0001");
+  assert.deepEqual(flow?.embeddedIn, ["tasks/TASK-0001/flow-notes.md"]);
   assert.ok(diagrams.every((diagram) => diagram.path.endsWith(".draft")));
 });
 
